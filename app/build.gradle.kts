@@ -1,6 +1,20 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
 }
+
+// Keep publishing credentials in the ignored, local-only configuration file.
+val releaseSigningFile = rootProject.file("keystore.properties")
+val releaseSigning = if (releaseSigningFile.isFile) {
+    Properties().apply {
+        releaseSigningFile.reader(Charsets.UTF_8).use { load(it) }
+    }
+} else null
+
+fun releaseSigningProperty(name: String): String =
+    releaseSigning?.getProperty(name)?.takeIf { it.isNotBlank() }
+        ?: throw GradleException("Missing '$name' in local keystore.properties.")
 
 android {
     namespace = "com.changyu.ochat"
@@ -12,14 +26,32 @@ android {
         applicationId = "com.changyu.ochat"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.14.514"
+        versionCode = 1
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    if (releaseSigning != null) {
+        signingConfigs {
+            create("release") {
+                val keystore = rootProject.file(releaseSigningProperty("storeFile"))
+                if (!keystore.isFile) {
+                    throw GradleException("Release keystore not found. Check storeFile in local keystore.properties.")
+                }
+                storeFile = keystore
+                storePassword = releaseSigningProperty("storePassword")
+                keyAlias = releaseSigningProperty("keyAlias")
+                keyPassword = releaseSigningProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigning != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = false
             }

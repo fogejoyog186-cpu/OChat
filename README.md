@@ -60,11 +60,24 @@ Debug APK 输出到 `app/build/outputs/apk/debug/`，测试及 Lint 报告位于
 
 ## 发布构建
 
+使用 Android Studio 的 **Build → Generate Signed Bundle / APK → Create new** 创建发布密钥，将密钥保存在工程目录之外并备份。复制根目录的 `keystore.properties.example` 为 `keystore.properties`，在本机填写四个字段：
+
+- `storeFile`：密钥文件的绝对路径，或相对于工程根目录的路径。
+- `storePassword`：密钥库密码。
+- `keyAlias`：签名密钥别名。
+- `keyPassword`：签名密钥密码。
+
+配置使用 Java Properties 格式。Windows 路径请使用 `/`；值中的反斜杠需要写成 `\\`。不要将密钥或密码粘贴到问题反馈、日志或公开仓库。`.gitignore` 已排除本机 `keystore.properties` 及签名密钥文件，公开模板不包含凭据。
+
+填写完整配置后生成签名 APK：
+
 ```sh
 ./gradlew :app:assembleRelease
 ```
 
-当前工程未内置发布签名配置，生成的 Release APK 为未签名产物。正式分发请在 Android Studio 的 **Generate Signed App Bundle / APK** 中使用自己的发布密钥签名，并妥善备份密钥。签名文件、密码和本机签名配置不应提交到仓库。
+Windows 使用 `.\gradlew.bat :app:assembleRelease`。产物位于 `app/build/outputs/apk/release/`，请将签名后的 `app-release.apk` 附加到 GitHub Release。后续版本继续使用同一发布密钥，并递增 `versionCode`。
+
+未创建本机签名配置时，Release 构建保留未签名产物 `app-release-unsigned.apk`，不能直接安装或作为正式 APK 分发。Debug 构建和默认 GitHub CI 不需要发布密钥。
 
 ## GitHub 仓库
 
