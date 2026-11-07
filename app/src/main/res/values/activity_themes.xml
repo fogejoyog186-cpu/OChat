@@ -1,0 +1,19 @@
+<resources>
+    <!-- Explicit app preference must not inherit the device's opposite DayNight mode. -->
+    <style name="AppTheme.Light" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/cyan_700</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">@color/cyan_700</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="colorAccent">@color/cyan_700</item>
+        <item name="android:colorAccent">@color/cyan_700</item>
+    </style>
+    <style name="AppTheme.Dark" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">@color/cyan_200</item>
+        <item name="colorOnPrimary">#000000</item>
+        <item name="colorSecondary">@color/cyan_200</item>
+        <item name="colorOnSecondary">#000000</item>
+        <item name="colorAccent">@color/cyan_200</item>
+        <item name="android:colorAccent">@color/cyan_200</item>
+    </style>
+</resources>

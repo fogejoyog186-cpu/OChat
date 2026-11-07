@@ -1,0 +1,39 @@
+# Generated build and tool caches
+.gradle/
+.kotlin/
+**/build/
+.externalNativeBuild/
+.cxx/
+
+# Local Android SDK and IDE state
+local.properties
+.idea/
+*.iml
+captures/
+
+# Signing credentials and local secrets
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+key.properties
+signing.properties
+.env
+*.env
+.env.*
+!.env.example
+
+# Local application data, exports and diagnostics
+*.apk
+*.aab
+*.apks
+*.log
+*.hprof
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini

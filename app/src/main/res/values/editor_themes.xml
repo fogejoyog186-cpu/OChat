@@ -1,0 +1,18 @@
+<resources>
+    <style name="EditorDialogTheme.Dark" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorBackground">#1D2931</item>
+        <item name="android:windowBackground">#1D2931</item>
+        <item name="android:textColorPrimary">#E1EBF0</item>
+        <item name="android:textColorSecondary">#A9BBC4</item>
+        <item name="android:colorAccent">@color/cyan_200</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+    <style name="EditorDialogTheme.Light" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorBackground">#FFFFFF</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:textColorPrimary">#243237</item>
+        <item name="android:textColorSecondary">#60717B</item>
+        <item name="android:colorAccent">@color/cyan_700</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
