@@ -27,6 +27,7 @@ signing.properties
 !.env.example
 
 # Local application data, exports and diagnostics
+/release-artifacts/
 *.apk
 *.aab
 *.apks

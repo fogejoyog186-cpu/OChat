@@ -14,6 +14,10 @@ OChat 是一款 Android AI 对话客户端，可自行配置模型提供商、�
 
 模型能力、附件类型、搜索和思考内容的可用性取决于所选模型及服务接口。HTML / SVG 预览不执行 JavaScript，不能替代完整浏览器。
 
+PDF 以原文件发送，保留扫描页、图片和图表；一次请求的附件原始数据合计须小于 50 MB，仍受服务端页数、上下文和模型视觉能力限制。DOCX、XLSX、PPTX 和文本文件在本地提取文字（最多 200000 字符，超出时明确标记截断），旧版 DOC / XLS / PPT 请先转换格式。
+
+可在文件管理器或其他应用中选中文档，通过系统“分享”选择 OChat。输入区为空且已配置模型时会准备文件并发送；已有草稿或准备期间更换对话、模型时，文件保留在输入区，供确认后发送。
+
 ## 开始使用
 
 1. 进入设置，创建模型提供商。
@@ -69,13 +73,13 @@ Debug APK 输出到 `app/build/outputs/apk/debug/`，测试及 Lint 报告位于
 
 配置使用 Java Properties 格式。Windows 路径请使用 `/`；值中的反斜杠需要写成 `\\`。不要将密钥或密码粘贴到问题反馈、日志或公开仓库。`.gitignore` 已排除本机 `keystore.properties` 及签名密钥文件，公开模板不包含凭据。
 
-填写完整配置后生成签名 APK：
+填写完整配置后生成并归档签名 APK：
 
 ```sh
-./gradlew :app:assembleRelease
+./gradlew :app:archiveReleaseApk
 ```
 
-Windows 使用 `.\gradlew.bat :app:assembleRelease`。产物位于 `app/build/outputs/apk/release/`，请将签名后的 `app-release.apk` 附加到 GitHub Release。后续版本继续使用同一发布密钥，并递增 `versionCode`。
+Windows 使用 `.\gradlew.bat :app:archiveReleaseApk`。归档产物位于 `release-artifacts/OChat-<versionName>.apk`，可直接附加到 GitHub Release；该目录已被 Git 忽略，普通构建或 clean 不会清理它。标准构建产物仍位于 `app/build/outputs/apk/release/`。后续版本继续使用同一发布密钥，并递增 `versionCode`。
 
 未创建本机签名配置时，Release 构建保留未签名产物 `app-release-unsigned.apk`，不能直接安装或作为正式 APK 分发。Debug 构建和默认 GitHub CI 不需要发布密钥。
 

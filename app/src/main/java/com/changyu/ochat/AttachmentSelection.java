@@ -9,7 +9,7 @@ import java.util.UUID;
 
 /** SAF for system documents; GET_CONTENT also admits third-party file managers such as MT. */
 final class AttachmentSelection {
- static final int MAX_IMPORT_BYTES=20*1024*1024;
+ static final int MAX_IMPORT_BYTES=AttachmentBatch.MAX_FILE_BYTES;
  static Intent documents(boolean images){return new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(images?"image/*":"*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);}
  static Intent managers(){
   Intent pick=new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -27,11 +27,11 @@ final class AttachmentSelection {
   File target=new File(folder,UUID.randomUUID()+ext);boolean success=false;
   try(InputStream in=context.getContentResolver().openInputStream(source);OutputStream out=new FileOutputStream(target)){
    if(in==null)throw new IOException("无法打开所选文件");byte[] buffer=new byte[16384];int n,total=0;
-   while((n=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();total+=n;if(total>MAX_IMPORT_BYTES)throw new IOException("导入文件超过 20 MiB，请选择较小文件");out.write(buffer,0,n);}
+   while((n=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();total+=n;if(total>MAX_IMPORT_BYTES)throw new IOException("导入文件达到 50 MB 上限，请拆分文件后再发送");out.write(buffer,0,n);}
    if(total==0)throw new IOException("所选文件为空");
    descriptor.put("uri",FileProvider.getUriForFile(context,context.getPackageName()+".attachments",target).toString()).put("importedCopy",true);success=true;return descriptor;
   }finally{if(!success)target.delete();}
  }
- static void discard(Context c,JSONObject d){if(d.optBoolean("importedCopy"))try{Uri uri=Uri.parse(d.optString("uri"));if((c.getPackageName()+".attachments").equals(uri.getAuthority()))c.getContentResolver().delete(uri,null,null);}catch(Exception ignored){}}
+ static void discard(Context c,JSONObject d){AttachmentSnapshots.discard(c,d);if(d.optBoolean("importedCopy"))try{Uri uri=Uri.parse(d.optString("uri"));if((c.getPackageName()+".attachments").equals(uri.getAuthority()))c.getContentResolver().delete(uri,null,null);}catch(Exception ignored){}}
  private AttachmentSelection(){}
 }

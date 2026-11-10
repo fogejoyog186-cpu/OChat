@@ -219,7 +219,8 @@ public final class ChatGenerationService extends Service {
  private void prepareAttachments(Run run)throws Exception{
   JSONArray messages=run.session==null?null:run.session.optJSONArray("messages");Map<String,JSONObject> entries=new HashMap<>();
   for(int i=0;i<run.history.length();i++){JSONObject entry=run.history.optJSONObject(i);if(entry!=null&&!entry.optString("_messageId").isEmpty())entries.put(entry.optString("_messageId"),entry);}
-  int used=0;
+  int used=0,latestUser=-1;
+  if(messages!=null)for(int i=messages.length()-1;i>=0;i--){JSONObject m=messages.optJSONObject(i);if(m!=null&&m.optBoolean("user")&&!m.optBoolean("error")){latestUser=i;break;}}
   if(messages!=null)for(int i=messages.length()-1;i>=0;i--){
    JSONObject message=messages.optJSONObject(i);if(message==null||message.optBoolean("error")||!message.optBoolean("user"))continue;
    JSONObject entry=entries.get(message.optString("id"));JSONArray attachments=message.optJSONArray("attachments");if(entry==null||attachments==null)continue;
@@ -227,11 +228,13 @@ public final class ChatGenerationService extends Service {
    for(int j=0;j<Math.min(10,attachments.length());j++){
     if(!valid(run)||Thread.currentThread().isInterrupted())return;
     JSONObject attachment=attachments.optJSONObject(j);if(attachment==null)continue;
-    try{String uri=attachment.optString("uri"),payload=attachment.optString("payloadSnapshot",run.prepared.get(uri));if(payload.isEmpty())payload=run.prepared.get(uri);
-     if(payload==null){if(!"content".equals(Uri.parse(uri).getScheme()))throw new java.io.IOException();payload=AttachmentBatch.payload(getContentResolver(),attachment);}
-     int bytes=AttachmentBatch.estimatedBytes(payload);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used){content.put(new JSONObject().put("type","text").put("text","较早的附件未加入本次请求（附件总大小限制）"));continue;}
+    try{String uri=attachment.optString("uri"),payload=run.prepared.get(uri);
+     if(payload==null)payload=AttachmentSnapshots.read(this,attachment);
+     if(payload==null){if(!"content".equals(Uri.parse(uri).getScheme()))throw new java.io.IOException("附件地址不可读取");payload=AttachmentBatch.payload(getContentResolver(),attachment);}
+     if(AttachmentBatch.isFailure(payload))throw new java.io.IOException(AttachmentBatch.failureMessage(payload));
+     int bytes=AttachmentBatch.estimatedBytes(attachment,payload);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used){if(i==latestUser)throw new java.io.IOException("本次附件合计达到 50 MB 上限，请减少附件");content.put(new JSONObject().put("type","text").put("text","较早的附件未加入本次请求（附件总大小限制）"));continue;}
      used+=bytes;content.put(AttachmentBatch.part(attachment,payload,run.protocol));
-    }catch(Exception unavailable){content.put(new JSONObject().put("type","text").put("text","附件未发送：格式不支持或文件授权已失效，请重新选择。"));}
+    }catch(Exception unavailable){String reason="附件 "+attachment.optString("displayName","文件")+" 未发送："+ApiFailure.local(unavailable);if(i==latestUser)throw new java.io.IOException(reason);content.put(new JSONObject().put("type","text").put("text",reason));}
    }entry.put("content",content);
   }
   for(int i=0;i<run.history.length();i++){JSONObject entry=run.history.optJSONObject(i);if(entry!=null)entry.remove("_messageId");}

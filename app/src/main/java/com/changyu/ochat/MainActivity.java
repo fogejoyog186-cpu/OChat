@@ -5,6 +5,7 @@ import android.content.*;import android.app.AlertDialog;import android.graphics.
 public class MainActivity extends AppCompatActivity {
  private int ink=Color.rgb(36,37,43),muted=Color.rgb(119,121,131),purple=Color.rgb(103,80,164),page=Color.rgb(250,248,252),card=Color.WHITE; private static final int PICK_ATTACHMENT=41;
  private AttachmentUi attachmentUi;
+ private final ArrayDeque<IncomingShare.Request> attachmentImports=new ArrayDeque<>();private IncomingShare.Request activeAttachmentImport;private boolean sharedIntentConsumed;
  private LinearLayout messageList,attachmentPreview,historyList;private ScrollView conversationScroll;private EditText composer;private TextView modelLabel,modelSelector,conversationTitle;private SwitchCompat webSwitch;private String provider="OpenAI Compatible",model="gpt-4o-mini",reasoning="default";private final List<JSONObject> pendingAttachments=new ArrayList<>();private final Map<String,String> preparedAttachments=new HashMap<>();private boolean attachmentLoading;private volatile int attachmentGeneration;private final java.util.concurrent.ExecutorService attachmentWorker=java.util.concurrent.Executors.newSingleThreadExecutor();private java.util.concurrent.Future<?> attachmentTask;private LinearLayout attachmentChoices;private android.animation.ValueAnimator attachmentAnimation;private boolean choicesOpen;private SharedPreferences prefs;private final ChatApiClient.CancellationHandle topicCancellation=new ChatApiClient.CancellationHandle();private final ChatApiClient apiClient=new ChatApiClient(topicCancellation);private boolean sending; private final Set<String> topicRequestsInFlight=new HashSet<>();
  private final SharedPreferences.OnSharedPreferenceChangeListener modelPreferences=(p,k)->{
   if("provider".equals(k)||"providerId".equals(k)||"model".equals(k)||"modelId".equals(k)||"reasoningEffort".equals(k))runOnUiThread(this::refreshModelLabels);
@@ -56,8 +57,9 @@ public class MainActivity extends AppCompatActivity {
   scrollBottom();
  }
  @Override protected void onStop(){ChatGenerationService.detach(generationListener);super.onStop();}
- @Override protected void onSaveInstanceState(Bundle out){cacheCodeViewStates();Bundle states=new Bundle();for(Map.Entry<String,Bundle> item:codeViewStates.entrySet())states.putBundle(item.getKey(),item.getValue());out.putBundle("codeViewStates",states);Bundle reasoningState=new Bundle();for(Map.Entry<String,Boolean> item:reasoningExpanded.entrySet())reasoningState.putBoolean(item.getKey(),item.getValue());out.putBundle("reasoningExpanded",reasoningState);super.onSaveInstanceState(out);}
- @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra("resumeGeneration",false))openRunningConversation();}
+ @Override protected void onSaveInstanceState(Bundle out){saveIncomingState(out);cacheCodeViewStates();Bundle states=new Bundle();for(Map.Entry<String,Bundle> item:codeViewStates.entrySet())states.putBundle(item.getKey(),item.getValue());out.putBundle("codeViewStates",states);Bundle reasoningState=new Bundle();for(Map.Entry<String,Boolean> item:reasoningExpanded.entrySet())reasoningState.putBoolean(item.getKey(),item.getValue());out.putBundle("reasoningExpanded",reasoningState);super.onSaveInstanceState(out);}
+ @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);if(IncomingShare.accepts(intent)){receiveSharedIntent(intent);return;}setIntent(intent);if(resumingGeneration(intent))openRunningConversation();}
+ private boolean resumingGeneration(Intent intent){try{return intent!=null&&!IncomingShare.accepts(intent)&&intent.getBooleanExtra("resumeGeneration",false);}catch(RuntimeException malformed){return false;}}
  private void openRunningConversation(){
   ChatGenerationService.Run run=ChatGenerationService.active();if(run==null)return;
   JSONObject session=MessageEdits.findSession(readSessions(),run.sessionId);if(session==null)return;
@@ -66,7 +68,7 @@ public class MainActivity extends AppCompatActivity {
  private void cacheCodeViewStates(){if(messageList==null)return;for(int i=0;i<messageList.getChildCount();i++){MarkdownMessageView view=messageList.getChildAt(i).findViewWithTag("markdown-message");if(view!=null&&!view.messageId().isEmpty())codeViewStates.put(view.messageId(),view.codeState());}}
  private String protocol(){return activeProvider().optString("protocol",ChatApiClient.CHAT_COMPLETIONS);}
  private static final class ReplyContext {final ChatApiClient.CancellationHandle cancel=new ChatApiClient.CancellationHandle();final ChatApiClient client=new ChatApiClient(cancel);final StringBuffer partial=new StringBuffer();StreamingMarkdown stream;String searchStatus="",searchResults="";SearchSources sources=new SearchSources();LinearLayout visibleRow;final String sessionId,modelId,effort;final long timestamp;SearchOptions search=SearchOptions.OFF;String protocol="chat_completions",branchId="",temperature="0.7",topP="0.9",outputTokens=ContextBudget.DEFAULT_OUTPUT_TEXT;volatile boolean finished;ReplyContext(String sessionId,String modelId,String effort){this(sessionId,modelId,effort,System.currentTimeMillis());}ReplyContext(String sessionId,String modelId,String effort,long timestamp){this.sessionId=sessionId;this.modelId=modelId;this.effort=effort;this.timestamp=timestamp;}}
- @Override protected void onCreate(@Nullable Bundle state){ThemePalette.applyActivityTheme(this);super.onCreate(state);if(state!=null){Bundle savedReasoning=state.getBundle("reasoningExpanded");if(savedReasoning!=null)for(String key:savedReasoning.keySet())reasoningExpanded.put(key,savedReasoning.getBoolean(key));Bundle saved=state.getBundle("codeViewStates");if(saved!=null)for(String key:saved.keySet())codeViewStates.put(key,saved.getBundle(key));}prefs=getSharedPreferences("chat",MODE_PRIVATE);ModelStore.migrate(prefs);applyCustomTheme();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);getWindow().setStatusBarColor(page);getWindow().setNavigationBarColor(page);getWindow().getDecorView().setSystemUiVisibility(ThemePalette.resolve(this).dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);provider=prefs.getString("provider",provider);model=prefs.getString("model",model);reasoning=prefs.getString("reasoningEffort","default");setContentView(buildScreen());prefs.registerOnSharedPreferenceChangeListener(modelPreferences);refreshModelLabels();ChatGenerationService.recoverInterrupted(this);initializeSessions(SessionLaunchPolicy.claimColdStart()&&!getIntent().getBooleanExtra("resumeGeneration",false));refreshConversationTitle();}
+ @Override protected void onCreate(@Nullable Bundle state){ThemePalette.applyActivityTheme(this);super.onCreate(state);if(state!=null){Bundle savedReasoning=state.getBundle("reasoningExpanded");if(savedReasoning!=null)for(String key:savedReasoning.keySet())reasoningExpanded.put(key,savedReasoning.getBoolean(key));Bundle saved=state.getBundle("codeViewStates");if(saved!=null)for(String key:saved.keySet())codeViewStates.put(key,saved.getBundle(key));}prefs=getSharedPreferences("chat",MODE_PRIVATE);ModelStore.migrate(prefs);applyCustomTheme();getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);getWindow().setStatusBarColor(page);getWindow().setNavigationBarColor(page);getWindow().getDecorView().setSystemUiVisibility(ThemePalette.resolve(this).dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);provider=prefs.getString("provider",provider);model=prefs.getString("model",model);reasoning=prefs.getString("reasoningEffort","default");setContentView(buildScreen());prefs.registerOnSharedPreferenceChangeListener(modelPreferences);refreshModelLabels();ChatGenerationService.recoverInterrupted(this);initializeSessions(SessionLaunchPolicy.claimColdStart()&&!resumingGeneration(getIntent()));refreshConversationTitle();restoreIncomingState(state);SessionRepository.get(prefs).manageSnapshots(this,pendingAttachments);if(!sharedIntentConsumed&&IncomingShare.accepts(getIntent()))receiveSharedIntent(getIntent());resumeAttachmentWork();}
  private androidx.viewpager2.widget.ViewPager2 pager;
  private View buildScreen(){LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(page);root.addView(buildTopBar(),new LinearLayout.LayoutParams(-1,dp(ScreenInsets.TOP_BAR_DP)));root.addView(buildConversation(),new LinearLayout.LayoutParams(-1,0,1));root.addView(buildComposer(),new LinearLayout.LayoutParams(-1,-2));LinearLayout history=buildHistoryPanel();ScreenInsets.apply(this,root);ScreenInsets.apply(this,history);pager=new androidx.viewpager2.widget.ViewPager2(this);pager.setId(View.generateViewId());pager.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);pager.setOffscreenPageLimit(1);View[] pages={history,root};pager.setAdapter(new androidx.recyclerview.widget.RecyclerView.Adapter<PageHolder>(){public int getItemCount(){return 2;}public PageHolder onCreateViewHolder(ViewGroup parent,int type){FrameLayout host=new FrameLayout(MainActivity.this);host.setLayoutParams(new ViewGroup.LayoutParams(-1,-1));return new PageHolder(host);}public void onBindViewHolder(PageHolder h,int position){FrameLayout host=(FrameLayout)h.itemView;host.removeAllViews();View v=pages[position];if(v.getParent()!=null)((ViewGroup)v.getParent()).removeView(v);host.addView(v,new FrameLayout.LayoutParams(-1,-1));}});pager.setCurrentItem(1,false);pager.registerOnPageChangeCallback(new androidx.viewpager2.widget.ViewPager2.OnPageChangeCallback(){public void onPageSelected(int position){if(position==0){if(follow!=null)follow.detach();hideKeyboard();refreshHistory();}}});getOnBackPressedDispatcher().addCallback(this,new androidx.activity.OnBackPressedCallback(true){public void handleOnBackPressed(){if(choicesOpen){setAttachmentChoices(false);return;}if(pager.getCurrentItem()==0)pager.setCurrentItem(1,true);else{setEnabled(false);getOnBackPressedDispatcher().onBackPressed();setEnabled(true);}}});return pager;}
  private static final class PageHolder extends androidx.recyclerview.widget.RecyclerView.ViewHolder {PageHolder(View v){super(v);}}
@@ -164,26 +166,115 @@ public class MainActivity extends AppCompatActivity {
  private void openFileManagers(){try{startActivityForResult(AttachmentSelection.managers(),PICK_ATTACHMENT);}catch(ActivityNotFoundException missing){Toast.makeText(this,"没有可用的文件管理器，请安装支持文件选择的应用",Toast.LENGTH_LONG).show();}}
  @Override protected void onActivityResult(int r,int result,@Nullable Intent data){
   super.onActivityResult(r,result,data);if(r==81||r==82){handleBackupResult(r,result,data);return;}if(r!=PICK_ATTACHMENT)return;setAttachmentChoices(false);if(result!=RESULT_OK)return;
-  List<Uri> selected=AttachmentBatch.collect(data),uris=new ArrayList<>();boolean limited=false;
-  for(Uri uri:selected){
-   if(!"content".equals(uri.getScheme())){Toast.makeText(this,"文件管理器未提供可读取的文件地址，请从“文件”中改用其他管理器",Toast.LENGTH_LONG).show();continue;}
-   boolean duplicate=false;for(JSONObject d:pendingAttachments)if(uri.toString().equals(d.optString("sourceUri",d.optString("uri"))))duplicate=true;
-   if(duplicate)continue;if(pendingAttachments.size()+uris.size()>=10){limited=true;continue;}uris.add(uri);
+  List<Uri> selected=AttachmentBatch.collect(data);if(selected.size()>AttachmentBatch.MAX_COUNT){Toast.makeText(this,"最多添加 "+AttachmentBatch.MAX_COUNT+" 个附件",Toast.LENGTH_LONG).show();selected=new ArrayList<>(selected.subList(0,AttachmentBatch.MAX_COUNT));}
+  attachmentImports.addLast(new IncomingShare.Request(selected,data==null?0:data.getFlags(),"",false));startNextAttachmentImport();
+ }
+ private void receiveSharedIntent(Intent intent){
+  sharedIntentConsumed=true;
+  // Keep the launch filter stable across recreation; discard external extras and URI grants.
+  Intent clean=getIntent().cloneFilter().setComponent(new ComponentName(this,MainActivity.class));clean.setSelector(null);clean.setFlags(0);setIntent(clean);
+  if(attachmentImports.size()>=10){Toast.makeText(this,"分享任务较多，请稍后重试",Toast.LENGTH_LONG).show();return;}
+  try{IncomingShare.Request request=IncomingShare.read(this,intent);if(request!=null){attachmentImports.addLast(request);closeHistory();setAttachmentChoices(false);startNextAttachmentImport();}}
+  catch(IOException error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
+ }
+ private void startNextAttachmentImport(){
+  if(isDestroyed()||attachmentLoading||activeAttachmentImport!=null||attachmentImports.isEmpty())return;
+  IncomingShare.Request request=attachmentImports.removeFirst();activeAttachmentImport=request;
+  if(request.shared&&!request.started){
+   request.started=true;request.autoSend=composer.getText().toString().trim().isEmpty()&&pendingAttachments.isEmpty();
+   request.sessionId=prefs.getString("currentSessionId","");refreshModelLabels();request.modelId=model;request.providerId=activeProvider().optString("id");
+   if(request.autoSend){request.expectedDraft=request.text.trim().isEmpty()?"请阅读并概括分享文件的主要内容。":request.text;composer.setText(request.expectedDraft);}
+   else if(!request.text.trim().isEmpty())composer.append((composer.length()==0?"":"\n")+request.text);
   }
-  if(limited)Toast.makeText(this,"最多添加 10 个附件",Toast.LENGTH_LONG).show();if(uris.isEmpty())return;
-  final int generation=++attachmentGeneration,flags=data==null?0:data.getFlags();if(attachmentTask!=null)attachmentTask.cancel(true);
-  attachmentLoading=true;renderAttachmentPreview();updateSendButton();
+  List<Uri> uris=new ArrayList<>();List<String> rejected=new ArrayList<>();
+  for(Uri uri:request.uris){
+   if(!"content".equals(uri.getScheme())){rejected.add("文件管理器未提供可读取的文件地址");continue;}
+   boolean duplicate=false;for(JSONObject d:pendingAttachments)if(uri.toString().equals(d.optString("sourceUri",d.optString("uri"))))duplicate=true;
+   if(duplicate)continue;if(pendingAttachments.size()+uris.size()>=AttachmentBatch.MAX_COUNT){rejected.add("最多添加 "+AttachmentBatch.MAX_COUNT+" 个附件");continue;}uris.add(uri);
+  }
+  if(uris.isEmpty()){if(!rejected.isEmpty())showAttachmentImportErrors(rejected);preparePendingAttachments(()->finishAttachmentImport(request,!rejected.isEmpty()));return;}
+  final int generation=++attachmentGeneration;if(attachmentTask!=null)attachmentTask.cancel(true);attachmentLoading=true;renderAttachmentPreview();updateSendButton();
   attachmentTask=attachmentWorker.submit(()->{
-   List<JSONObject> imported=new ArrayList<>();List<String> errors=new ArrayList<>();
-   for(Uri uri:uris){if(Thread.currentThread().isInterrupted())break;try{imported.add(AttachmentSelection.retain(getApplicationContext(),uri,flags));}catch(Exception error){errors.add(ApiFailure.local(error));}}
+   List<JSONObject> imported=new ArrayList<>();List<String> errors=new ArrayList<>(rejected);
+   for(Uri uri:uris){if(Thread.currentThread().isInterrupted())break;try{if(request.shared)IncomingShare.validate(getApplicationContext(),uri);imported.add(AttachmentSelection.retain(getApplicationContext(),uri,request.flags));}catch(Exception error){errors.add(ApiFailure.local(error));}}
    runOnUiThread(()->{
     if(isDestroyed()||generation!=attachmentGeneration){for(JSONObject d:imported)AttachmentSelection.discard(getApplicationContext(),d);return;}
-    pendingAttachments.addAll(imported);attachmentLoading=false;preparePendingAttachments();
-    if(!errors.isEmpty()){TextView text=label(android.text.TextUtils.join("\n\n",errors),14,ink,false);text.setTextIsSelectable(true);ScrollView scroll=new ScrollView(this);scroll.addView(text);new PanelDialog(this,"部分附件导入失败","已成功导入的附件可以继续使用",scroll).compact().action(AlertDialog.BUTTON_POSITIVE,"知道了",null).show();}
+    pendingAttachments.addAll(imported);attachmentLoading=false;if(!errors.isEmpty())showAttachmentImportErrors(errors);
+    preparePendingAttachments(()->finishAttachmentImport(request,!errors.isEmpty()));
    });
   });
  }
- private void preparePendingAttachments(){final int generation=++attachmentGeneration;if(attachmentTask!=null)attachmentTask.cancel(true);attachmentLoading=!pendingAttachments.isEmpty();preparedAttachments.clear();renderAttachmentPreview();final List<JSONObject> captured=new ArrayList<>(pendingAttachments);attachmentTask=attachmentWorker.submit(()->{Map<String,String> payloads=new HashMap<>();int used=0;boolean notice=false;for(JSONObject d:captured){if(generation!=attachmentGeneration||Thread.currentThread().isInterrupted())return;String p;try{p=AttachmentBatch.payload(getContentResolver(),d);int bytes=AttachmentBatch.estimatedBytes(p);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used)p="[附件超出总大小限制，请减少附件或选择较小文件]";else used+=bytes;}catch(Exception e){p="["+(e.getMessage()==null?"附件不可用，请重新选择":e.getMessage())+"]";}if(p.startsWith("["))notice=true;payloads.put(d.optString("uri"),p);}final boolean warn=notice;runOnUiThread(()->{if(isDestroyed()||generation!=attachmentGeneration)return;preparedAttachments.putAll(payloads);attachmentLoading=false;renderAttachmentPreview();if(warn)Toast.makeText(this,"部分附件无法发送，请查看提示并移除或更换",Toast.LENGTH_LONG).show();});});}
+ private void showAttachmentImportErrors(List<String> errors){
+  TextView text=label(android.text.TextUtils.join("\n\n",errors),14,ink,false);text.setTextIsSelectable(true);ScrollView scroll=new ScrollView(this);scroll.addView(text);
+  new PanelDialog(this,"部分附件导入失败","已成功导入的附件可以继续使用",scroll).compact().action(AlertDialog.BUTTON_POSITIVE,"知道了",null).show();
+ }
+ private void finishAttachmentImport(IncomingShare.Request request,boolean importFailed){
+  if(activeAttachmentImport!=request)return;activeAttachmentImport=null;
+  if(request.shared){
+   refreshModelLabels();boolean ready=!importFailed&&!pendingAttachments.isEmpty();
+   for(JSONObject d:pendingAttachments){String payload=preparedAttachments.get(d.optString("uri"));if(payload==null||AttachmentBatch.isFailure(payload))ready=false;}
+   boolean unchanged=request.expectedDraft.equals(composer.getText().toString())&&request.sessionId.equals(prefs.getString("currentSessionId",""))&&request.modelId.equals(model)&&request.providerId.equals(activeProvider().optString("id"));
+   if(request.autoSend&&ready&&unchanged)sendMessage();
+   else if(!pendingAttachments.isEmpty())Toast.makeText(this,"分享文件已添加，草稿已保留，请确认后发送",Toast.LENGTH_LONG).show();
+  }
+  startNextAttachmentImport();
+ }
+ private void preparePendingAttachments(){
+  if(activeAttachmentImport!=null){activeAttachmentImport.autoSend=false;if(!activeAttachmentImport.uris.isEmpty())attachmentImports.addFirst(activeAttachmentImport);activeAttachmentImport=null;}
+  preparePendingAttachments(null);
+ }
+ private void preparePendingAttachments(Runnable ready){
+  final int generation=++attachmentGeneration;if(attachmentTask!=null)attachmentTask.cancel(true);attachmentLoading=!pendingAttachments.isEmpty();preparedAttachments.clear();renderAttachmentPreview();
+  final List<JSONObject> captured=new ArrayList<>();try{for(JSONObject d:pendingAttachments)captured.add(new JSONObject(d.toString()));}catch(JSONException error){attachmentLoading=false;return;}
+  attachmentTask=attachmentWorker.submit(()->{
+   Map<String,String> payloads=new HashMap<>();Map<String,JSONObject> snapshots=new HashMap<>();List<JSONObject> createdSnapshots=new ArrayList<>();int used=0;boolean notice=false;
+   for(JSONObject d:captured){
+    if(generation!=attachmentGeneration||Thread.currentThread().isInterrupted()){discardPreparedSnapshots(createdSnapshots);return;}
+    String p;try{
+     p=AttachmentSnapshots.read(getApplicationContext(),d);boolean hadSnapshot=p!=null;if(p==null)p=AttachmentBatch.payload(getContentResolver(),d);
+     int bytes=AttachmentBatch.estimatedBytes(d,p);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used)throw new IOException("附件超出总大小限制，请减少附件或选择较小文件");used+=bytes;
+     if(!hadSnapshot){AttachmentSnapshots.capture(getApplicationContext(),d,p);if(!d.optString("payloadSnapshotFile").isEmpty())createdSnapshots.add(d);}
+     snapshots.put(d.optString("uri"),d);
+    }catch(Exception error){p=AttachmentBatch.failure(error.getMessage()==null?"附件不可用，请重新选择":error.getMessage());}
+    if(AttachmentBatch.isFailure(p))notice=true;payloads.put(d.optString("uri"),p);
+   }
+   final boolean warn=notice;
+   runOnUiThread(()->{
+    if(isDestroyed()||generation!=attachmentGeneration){discardPreparedSnapshots(createdSnapshots);return;}
+    for(int i=0;i<pendingAttachments.size();i++){JSONObject updated=snapshots.get(pendingAttachments.get(i).optString("uri"));if(updated!=null)pendingAttachments.set(i,updated);}
+    preparedAttachments.putAll(payloads);attachmentLoading=false;renderAttachmentPreview();updateSendButton();
+    if(warn)Toast.makeText(this,"部分附件无法发送，请查看提示并移除或更换",Toast.LENGTH_LONG).show();
+    if(ready!=null)ready.run();else startNextAttachmentImport();
+   });
+  });
+ }
+ private void discardPreparedSnapshots(List<JSONObject> snapshots){for(JSONObject d:snapshots)AttachmentSnapshots.discard(getApplicationContext(),d);}
+ private void resumeAttachmentWork(){
+  if(attachmentLoading||activeAttachmentImport!=null)return;if(!attachmentImports.isEmpty())startNextAttachmentImport();else if(!pendingAttachments.isEmpty()&&preparedAttachments.isEmpty())preparePendingAttachments();
+ }
+ private void saveIncomingState(Bundle out){
+  if(activeAttachmentImport!=null||attachmentLoading){
+   ++attachmentGeneration;if(attachmentTask!=null)attachmentTask.cancel(true);attachmentLoading=false;
+   if(activeAttachmentImport!=null){attachmentImports.addFirst(activeAttachmentImport);activeAttachmentImport=null;}
+  }
+  try{
+   JSONArray pending=new JSONArray();for(JSONObject d:pendingAttachments){JSONObject copy=new JSONObject(d.toString());copy.remove("payloadSnapshot");pending.put(copy);}
+   JSONArray requests=new JSONArray();for(IncomingShare.Request request:attachmentImports)requests.put(request.json());
+   out.putString("pendingAttachmentDescriptors",pending.toString());out.putString("attachmentImports",requests.toString());out.putString("composerDraft",composer==null?"":composer.getText().toString());out.putBoolean("sharedIntentConsumed",sharedIntentConsumed);
+  }catch(JSONException failure){android.util.Log.w("IncomingShare","Unable to preserve attachment draft");}
+ }
+ private void restoreIncomingState(Bundle state){
+  if(state==null)return;sharedIntentConsumed=state.getBoolean("sharedIntentConsumed",false);composer.setText(state.getString("composerDraft",""));
+  try{
+   JSONArray pending=new JSONArray(state.getString("pendingAttachmentDescriptors","[]"));for(int i=0;i<Math.min(pending.length(),AttachmentBatch.MAX_COUNT);i++){JSONObject d=pending.getJSONObject(i);if("content".equals(Uri.parse(d.optString("uri")).getScheme()))pendingAttachments.add(d);}
+   JSONArray requests=new JSONArray(state.getString("attachmentImports","[]"));for(int i=0;i<requests.length();i++)attachmentImports.addLast(IncomingShare.Request.restore(requests.getJSONObject(i)));
+  }catch(JSONException invalid){Toast.makeText(this,"部分待发文件无法恢复，请重新添加",Toast.LENGTH_LONG).show();}
+  renderAttachmentPreview();
+ }
+ private void removePendingAttachment(JSONObject descriptor){
+  String source=descriptor.optString("sourceUri",descriptor.optString("uri"));if(activeAttachmentImport!=null)activeAttachmentImport.uris.removeIf(uri->source.equals(uri.toString()));for(IncomingShare.Request request:attachmentImports)request.uris.removeIf(uri->source.equals(uri.toString()));
+  pendingAttachments.remove(descriptor);preparePendingAttachments();AttachmentSelection.discard(getApplicationContext(),descriptor);
+ }
 
  private AttachmentUi attachmentUi(){if(attachmentUi==null)attachmentUi=new AttachmentUi(this);return attachmentUi;}
  private void renderAttachmentPreview(){
@@ -192,12 +283,12 @@ public class MainActivity extends AppCompatActivity {
   scroll.setClipToPadding(false);scroll.setPadding(0,dp(6),0,dp(6));
   LinearLayout items=new LinearLayout(this);items.setGravity(Gravity.CENTER_VERTICAL);scroll.addView(items,new ViewGroup.LayoutParams(-2,dp(96)));
   for(JSONObject descriptor:pendingAttachments){
-   View item=attachmentUi().pending(descriptor,attachmentLoading,()->previewAttachment(descriptor),()->{pendingAttachments.remove(descriptor);preparePendingAttachments();AttachmentSelection.discard(getApplicationContext(),descriptor);});
+   View item=attachmentUi().pending(descriptor,attachmentLoading,()->previewAttachment(descriptor),()->removePendingAttachment(descriptor));
    LinearLayout.LayoutParams params=(LinearLayout.LayoutParams)item.getLayoutParams();params.rightMargin=dp(8);items.addView(item,params);
   }
   attachmentPreview.addView(scroll,new LinearLayout.LayoutParams(-1,dp(108)));
  }
- private void saveAttachment(String sessionId,JSONArray descriptors,Map<String,String> payloads){if(descriptors.length()==0)return;try{JSONArray all=readSessions();for(int i=0;i<all.length();i++){JSONObject session=all.optJSONObject(i);if(session!=null&&sessionId.equals(session.optString("id"))){JSONArray messages=session.optJSONArray("messages");if(messages!=null&&messages.length()>0){JSONArray saved=new JSONArray();int total=0;for(int j=0;j<descriptors.length();j++){JSONObject descriptor=descriptors.optJSONObject(j);if(descriptor==null)continue;JSONObject copy=new JSONObject(descriptor.toString());String payload=payloads.get(descriptor.optString("uri"));if(payload==null||payload.startsWith("["))throw new IOException("附件内容未准备好，不能保存为已发送附件");total+=AttachmentBatch.estimatedBytes(payload);if(total>AttachmentBatch.MAX_TOTAL_CHARS)throw new IOException("会话附件总量超过限制");copy.put("payloadSnapshot",payload);saved.put(copy);}messages.getJSONObject(messages.length()-1).put("attachments",saved);persistSessions(all);}return;}}}catch(Exception e){android.util.Log.w("Attachment","Unable to persist attachment payload snapshot",e);}}
+ private void saveAttachment(String sessionId,JSONArray descriptors,Map<String,String> payloads){if(descriptors.length()==0)return;try{JSONArray all=readSessions();for(int i=0;i<all.length();i++){JSONObject session=all.optJSONObject(i);if(session!=null&&sessionId.equals(session.optString("id"))){JSONArray messages=session.optJSONArray("messages");if(messages!=null&&messages.length()>0){JSONArray saved=new JSONArray();int total=0;for(int j=0;j<descriptors.length();j++){JSONObject descriptor=descriptors.optJSONObject(j);if(descriptor==null)continue;JSONObject copy=new JSONObject(descriptor.toString());String payload=payloads.get(descriptor.optString("uri"));if(payload==null||AttachmentBatch.isFailure(payload))throw new IOException("附件内容未准备好，不能保存为已发送附件");total+=AttachmentBatch.estimatedBytes(descriptor,payload);if(total>AttachmentBatch.MAX_TOTAL_CHARS)throw new IOException("会话附件总量超过限制");if(!AttachmentSnapshots.has(copy))copy.put("payloadSnapshot",payload);saved.put(copy);}messages.getJSONObject(messages.length()-1).put("attachments",saved);persistSessions(all);}return;}}}catch(Exception e){android.util.Log.w("Attachment","Unable to persist attachment payload snapshot",e);}}
  private void appendAttachment(JSONObject descriptor){
   if(descriptor==null||messageList.getChildCount()==0)return;
   View row=messageList.getChildAt(messageList.getChildCount()-1);if(!(row instanceof LinearLayout))return;
@@ -237,10 +328,10 @@ public class MainActivity extends AppCompatActivity {
  private void clearSentComposer(){composer.setText("");hideKeyboard();attachmentGeneration++;pendingAttachments.clear();preparedAttachments.clear();setAttachmentChoices(false);renderAttachmentPreview();updateSendButton();}
  private void sendMessage(){
   if(attachmentLoading){Toast.makeText(this,"附件正在准备，请稍候",Toast.LENGTH_SHORT).show();return;}
-  for(JSONObject attachment:pendingAttachments){String payload=preparedAttachments.get(attachment.optString("uri"));if(payload==null||payload.startsWith("[")){Toast.makeText(this,payload==null?"附件尚未准备完成":payload,Toast.LENGTH_LONG).show();return;}}
+  for(JSONObject attachment:pendingAttachments){String payload=preparedAttachments.get(attachment.optString("uri"));if(payload==null||AttachmentBatch.isFailure(payload)){Toast.makeText(this,payload==null?"附件尚未准备完成":AttachmentBatch.failureMessage(payload),Toast.LENGTH_LONG).show();return;}}
   String text=composer.getText().toString().trim();if(text.isEmpty()&&pendingAttachments.isEmpty())return;if(!preflight())return;
   String sent=text.isEmpty()?"已添加附件":text;JSONArray descriptors=new JSONArray();
-  try{for(JSONObject d:pendingAttachments){JSONObject copy=new JSONObject(d.toString());String payload=preparedAttachments.get(d.optString("uri"));if(payload!=null)copy.put("payloadSnapshot",payload);descriptors.put(copy);}}catch(JSONException invalid){return;}
+  try{for(JSONObject d:pendingAttachments){JSONObject copy=new JSONObject(d.toString());String payload=preparedAttachments.get(d.optString("uri"));if(payload!=null&&!AttachmentSnapshots.has(copy))copy.put("payloadSnapshot",payload);descriptors.put(copy);}}catch(JSONException invalid){return;}
   if(ChatGenerationService.active(prefs.getString("currentSessionId",""))!=null){
    try{JSONObject queued=new JSONObject().put("message",new JSONObject().put("id",UUID.randomUUID().toString()).put("user",true).put("text",sent).put("timestamp",System.currentTimeMillis()).put("attachments",descriptors)).put("config",new JSONObject(((SessionConfig)scoped()).values.toString()));
     ChatGenerationService.enqueue(this,prefs.getString("currentSessionId",""),queued);clearSentComposer();Toast.makeText(this,"已加入队列，将在本次回复结束后发送",Toast.LENGTH_SHORT).show();refreshHistory();
@@ -369,7 +460,7 @@ public class MainActivity extends AppCompatActivity {
   for(int i=0;i<messages.length();i++){JSONObject message=messages.optJSONObject(i);if(message==null||message.optBoolean("error",false))continue;JSONObject entry=history.optJSONObject(index++);JSONArray attachments=message.optJSONArray("attachments");if(entry==null||!message.optBoolean("user")||attachments==null)continue;
    try{JSONArray content=new JSONArray().put(new JSONObject().put("type","text").put("text",message.optString("text")));
     for(int j=0;j<Math.min(10,attachments.length());j++){if(isDestroyed()||Thread.currentThread().isInterrupted()||(request!=null&&request.cancel.isCancelled()))return;JSONObject attachment=attachments.optJSONObject(j);if(attachment==null)continue;Uri uri=Uri.parse(attachment.optString("uri"));if(!"content".equals(uri.getScheme()))continue;String mime=attachment.optString("mime");try{
-     String payload=attachment.optString("payloadSnapshot",prepared.get(attachment.optString("uri")));if(payload.isEmpty())payload=prepared.get(attachment.optString("uri"));if(used>=AttachmentBatch.MAX_TOTAL_CHARS)payload=null;else if(payload==null)payload=AttachmentBatch.payload(getContentResolver(),attachment);if(payload!=null){used+=payload.length();if(used<=AttachmentBatch.MAX_TOTAL_CHARS)content.put(AttachmentBatch.part(attachment,payload,request==null?ChatApiClient.RESPONSES:request.protocol));}
+     String payload=AttachmentSnapshots.read(getApplicationContext(),attachment);if(payload==null||payload.isEmpty())payload=prepared.get(attachment.optString("uri"));if(payload==null)payload=AttachmentBatch.payload(getContentResolver(),attachment);if(AttachmentBatch.isFailure(payload))throw new IOException(AttachmentBatch.failureMessage(payload));int bytes=AttachmentBatch.estimatedBytes(attachment,payload);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used)throw new IOException("附件总大小超过限制");used+=bytes;content.put(AttachmentBatch.part(attachment,payload,request==null?ChatApiClient.RESPONSES:request.protocol));
     }catch(Exception unavailable){content.put(new JSONObject().put("type","text").put("text","附件未发送：格式不支持或文件授权已失效，请重新选择。"));}}
     entry.put("content",content);
    }catch(JSONException ignored){}
@@ -495,7 +586,7 @@ public class MainActivity extends AppCompatActivity {
  private void initializeSessions(boolean coldStart){
   try{
    JSONArray all=readSessions();JSONObject current=null;ChatGenerationService.Run running=ChatGenerationService.active();
-   if(running!=null&&getIntent().getBooleanExtra("resumeGeneration",false))current=MessageEdits.findSession(all,running.sessionId);
+   if(running!=null&&resumingGeneration(getIntent()))current=MessageEdits.findSession(all,running.sessionId);
    if(current==null&&coldStart){for(int i=0;i<all.length();i++){JSONObject candidate=all.optJSONObject(i);if(reusableEmpty(candidate)){current=candidate;break;}}
     if(current==null){current=newSession();all.put(current);}current.put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date()));
    }
@@ -524,7 +615,7 @@ public class MainActivity extends AppCompatActivity {
   }
   return text.substring(0,text.offsetByCodePoints(0,Math.min(20,text.codePointCount(0,text.length()))));
  }
- @Override protected void onResume(){super.onResume();ChatGenerationService.attach(generationListener);if(generation!=null&&generation.finished)renderGeneration(generation);if(prefs!=null){refreshModelLabels();String id=prefs.getString("currentSessionId","");JSONArray all=readSessions();for(int i=0;i<all.length();i++){JSONObject s=all.optJSONObject(i);if(s!=null&&id.equals(s.optString("id"))){JSONObject first=firstUserMessage(s);if(first!=null)requestTopicTitle(first.optString("text",""),id);break;}}}}
+ @Override protected void onResume(){super.onResume();ChatGenerationService.attach(generationListener);if(generation!=null&&generation.finished)renderGeneration(generation);if(prefs!=null){refreshModelLabels();String id=prefs.getString("currentSessionId","");JSONArray all=readSessions();for(int i=0;i<all.length();i++){JSONObject s=all.optJSONObject(i);if(s!=null&&id.equals(s.optString("id"))){JSONObject first=firstUserMessage(s);if(first!=null)requestTopicTitle(first.optString("text",""),id);break;}}}resumeAttachmentWork();}
  private void showConversationSettings(){
   SharedPreferences config=scoped();LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);ThemePalette palette=ThemePalette.resolve(this);
   TextView hint=label("仅应用于本对话。新对话使用设置中的默认值。",13,muted,false);hint.setPadding(0,0,0,dp(12));body.addView(hint);

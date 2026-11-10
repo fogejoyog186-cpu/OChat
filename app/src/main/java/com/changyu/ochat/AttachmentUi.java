@@ -124,7 +124,9 @@ final class AttachmentUi implements AutoCloseable {
   dialog.action(AlertDialog.BUTTON_NEUTRAL,"其他应用打开",()->openExternal(file,uri));
   Future<?>[] work={null};show(dialog,()->{if(work[0]!=null)work[0].cancel(true);});
   work[0]=previews.submit(()->{try{
-   String text=office?AttachmentBatch.extractDocumentText(readBytes(uri,3*1024*1024),file.optString("mime"),file.optString("displayName")):readText(uri,64001);
+   String text;
+   if(office){try(InputStream input=owner.getContentResolver().openInputStream(uri)){if(input==null)throw new IOException("文件不可读取");text=AttachmentBatch.extractDocumentText(input,file.optString("mime"),file.optString("displayName"));}}
+   else text=readText(uri,64001);
    boolean truncated=text.length()>64000;String content=truncated?text.substring(0,64000)+"\n\n… 已显示前 64,000 字符":text;
    main.post(()->{if(!alive()||!dialog.isShowing())return;stage.removeAllViews();
     TextView body=UiStyle.text(owner,content,14,palette.ink,false);body.setTextIsSelectable(true);body.setLineSpacing(dp(3),1.12f);body.setPadding(dp(16),dp(16),dp(16),dp(24));

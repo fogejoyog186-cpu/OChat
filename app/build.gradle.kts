@@ -26,8 +26,8 @@ android {
         applicationId = "com.changyu.ochat"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -78,4 +78,18 @@ dependencies {
     testImplementation("org.json:json:20260814")
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+}
+
+// Keep versioned release artifacts outside build/, which Gradle cleans during packaging.
+val archiveVersionName = android.defaultConfig.versionName
+tasks.register<Copy>("archiveReleaseApk") {
+    dependsOn("assembleRelease")
+    from(layout.buildDirectory.file("outputs/apk/release/app-release.apk"))
+    into(rootProject.layout.projectDirectory.dir("release-artifacts"))
+    rename { "OChat-$archiveVersionName.apk" }
+    doFirst {
+        if (releaseSigning == null) {
+            throw GradleException("Local release signing is required to archive a release APK.")
+        }
+    }
 }

@@ -12,7 +12,7 @@ import java.util.zip.*;
 
 /** Portable user-selected backup; file entries are spooled to disk, never held as one huge byte array. */
 final class ConversationBackup {
- static final int MAX_JSON=32*1024*1024,MAX_FILE=20*1024*1024,MAX_TOTAL=150*1024*1024;
+ static final int MAX_JSON=32*1024*1024,MAX_FILE=AttachmentBatch.MAX_FILE_BYTES,MAX_TOTAL=150*1024*1024;
  static int exportTo(Context context,Uri uri,String snapshot)throws Exception{
   JSONArray sessions=new JSONArray(snapshot);Map<String,File> files=new LinkedHashMap<>();Map<String,String> uris=new HashMap<>();int[] total={0},missing={0};
   try{
@@ -20,10 +20,12 @@ final class ConversationBackup {
     String original=d.optString("uri");if(original.isEmpty())return;String name=uris.get(original);
     if(name==null){byte[] bytes=null;
      try(InputStream in=context.getContentResolver().openInputStream(Uri.parse(original))){bytes=read(in,MAX_FILE);}catch(Exception unavailable){
-      String payload=d.optString("payloadSnapshot");if(payload.startsWith("data:")&&payload.contains(","))bytes=Base64.decode(payload.substring(payload.indexOf(',')+1),Base64.DEFAULT);else if(!payload.isEmpty())bytes=payload.getBytes(StandardCharsets.UTF_8);
+      String payload=null;try{payload=AttachmentSnapshots.read(context,d);}catch(InterruptedIOException cancelled){throw cancelled;}catch(IOException missingSnapshot){/* Mark unavailable below and preserve the rest of the backup. */}
+      if(payload!=null){String type=AttachmentBatch.part(d,payload,ChatApiClient.RESPONSES).optString("type");if("input_file".equals(type)||"image_url".equals(type))bytes=Base64.decode(payload.substring(payload.indexOf(',')+1),Base64.DEFAULT);else if(!payload.isEmpty())bytes=payload.getBytes(StandardCharsets.UTF_8);}
      }
      if(bytes!=null&&bytes.length<=MAX_FILE){total[0]+=bytes.length;if(total[0]>MAX_TOTAL)throw new IOException("附件总大小超过 150 MiB，请分批备份");name="attachments/"+UUID.randomUUID();File spool=File.createTempFile("backup-",".part",context.getCacheDir());files.put(name,spool);try(OutputStream out=new FileOutputStream(spool)){out.write(bytes);}uris.put(original,name);}
     }
+    d.remove("payloadSnapshotFile");d.remove("payloadSnapshotChars");d.remove("restoredCopy");
     if(name!=null)d.put("backupFile",name);else {d.put("backupUnavailable",true);missing[0]++;}
    });
    JSONObject root=new JSONObject().put("format","ochat-backup").put("version",1).put("createdAt",System.currentTimeMillis()).put("sessions",sessions);
@@ -51,16 +53,17 @@ final class ConversationBackup {
    JSONArray sessions=root.getJSONArray("sessions");if(sessions.length()>10000)throw new IOException("对话数量过多");Map<String,String> restored=new HashMap<>();
    File folder=new File(context.getFilesDir(),"imported_attachments");if(!folder.exists()&&!folder.mkdirs())throw new IOException("无法创建附件目录");
    walk(sessions,d->{
+    d.remove("payloadSnapshotFile");d.remove("payloadSnapshotChars");d.remove("restoredCopy");d.remove("importedCopy");
     String path=d.optString("backupFile");if(path.isEmpty())return;File spool=files.get(path);if(spool==null){d.put("backupUnavailable",true);return;}String content=restored.get(path);
     if(content==null){String original=d.optString("displayName","attachment"),ext=original.contains(".")?original.substring(original.lastIndexOf('.')):"";if(!ext.matches("\\.[a-zA-Z0-9]{1,10}"))ext="";
      File file=new File(folder,UUID.randomUUID()+ext);created.add(file);try(InputStream in=new FileInputStream(spool);OutputStream out=new FileOutputStream(file)){copy(in,out,MAX_FILE);}content=FileProvider.getUriForFile(context,context.getPackageName()+".attachments",file).toString();restored.put(path,content);}
-    d.put("uri",content);d.remove("backupFile");d.remove("backupUnavailable");
+    d.put("uri",content).put("importedCopy",true).put("restoredCopy",true);d.remove("backupFile");d.remove("backupUnavailable");
    });
    for(int i=0;i<sessions.length();i++){JSONObject session=sessions.getJSONObject(i);session.remove("pendingReply");session.remove("outbox");if(session.optJSONArray("messages")==null)throw new IOException("对话消息格式无效");session.put("id",UUID.randomUUID().toString());}
    MessageEdits.ensureIds(sessions);success=true;return sessions;
   }finally{for(File file:files.values())file.delete();if(!success)for(File file:created)file.delete();}
  }
- static void discard(Context context,JSONArray sessions){Set<String> uris=new HashSet<>();try{walk(sessions,d->{String uri=d.optString("uri");if(uri.startsWith("content://"+context.getPackageName()+".attachments/"))uris.add(uri);});for(String uri:uris)context.getContentResolver().delete(Uri.parse(uri),null,null);}catch(Exception ignored){}}
+ static void discard(Context context,JSONArray sessions){Set<String> uris=new HashSet<>();try{walk(sessions,d->{String uri=d.optString("uri");if(d.optBoolean("restoredCopy")&&uri.startsWith("content://"+context.getPackageName()+".attachments/"))uris.add(uri);});for(String uri:uris)context.getContentResolver().delete(Uri.parse(uri),null,null);}catch(Exception ignored){}}
  interface Descriptor {void accept(JSONObject descriptor)throws Exception;}
  static void walk(Object value,Descriptor operation)throws Exception{walk(value,operation,0);}
  private static void walk(Object value,Descriptor operation,int depth)throws Exception{
