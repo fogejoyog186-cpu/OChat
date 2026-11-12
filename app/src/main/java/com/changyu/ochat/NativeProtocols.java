@@ -42,19 +42,19 @@ final class NativeProtocols {
   JSONArray out=new JSONArray();
   for(int i=0;i<a.length();i++){
    JSONObject p=a.optJSONObject(i);if(p==null)throw new IllegalArgumentException("附件内容块无效");
-   String type=p.optString("type"),data="",name="attachment";boolean image=false;
+   String type=p.optString("type"),name="attachment";Object data="";boolean image=false;
    if(type.equals("text")||type.equals("input_text")||type.equals("output_text")){
     String value=p.optString("text");if(value.isEmpty())continue;
     JSONObject t=new JSONObject().put("text",value);if(claude)t.put("type","text");out.put(t);continue;
    }
-   if(type.equals("image_url")){JSONObject picture=p.optJSONObject("image_url");if(picture==null)throw new IllegalArgumentException("图片内容字段无效");data=picture.optString("url");image=true;}
-   else if(type.equals("input_image")){data=p.optString("image_url");image=true;}
-   else if(type.equals("file")||type.equals("input_file")){JSONObject file=fileData(p);data=file.getString("file_data");name=file.getString("filename");}
+   if(type.equals("image_url")){JSONObject picture=p.optJSONObject("image_url");if(picture==null)throw new IllegalArgumentException("图片内容字段无效");data=picture.opt("url");image=true;}
+   else if(type.equals("input_image")){data=p.opt("image_url");image=true;}
+   else if(type.equals("file")||type.equals("input_file")){JSONObject file=fileData(p);data=file.get("file_data");name=file.getString("filename");}
    else throw new IllegalArgumentException("当前原生协议不支持附件内容类型："+type);
    String mime=embeddedMime(data);
    if(image&&!mime.startsWith("image/"))throw new IllegalArgumentException("图片附件的 MIME 类型无效");
    if(!image&&!"application/pdf".equals(mime))throw new IllegalArgumentException("此原生协议的原文件输入仅支持 PDF，其他文档请提取文字后发送");
-   String base64=data.substring(data.indexOf(',')+1);
+   Object base64=data instanceof FileAttachmentData?((FileAttachmentData)data).base64():((String)data).substring(((String)data).indexOf(',')+1);
    if(claude){
     JSONObject block=new JSONObject().put("type",image?"image":"document").put("source",new JSONObject().put("type","base64").put("media_type",mime).put("data",base64));
     if(!image)block.put("title",name);out.put(block);
@@ -66,12 +66,14 @@ final class NativeProtocols {
  static JSONObject fileData(JSONObject part)throws JSONException{
   JSONObject file="file".equals(part.optString("type"))?part.optJSONObject("file"):part;
   if(file==null)throw new IllegalArgumentException("附件缺少 file 字段");
-  String data=file.optString("file_data"),name=file.optString("filename",part.optString("filename","attachment"));
-  if(data.isEmpty())throw new IllegalArgumentException("附件缺少原始文件数据，请重新选择");
+  Object data=file.opt("file_data");String name=file.optString("filename",part.optString("filename","attachment"));
+  if(!(data instanceof FileAttachmentData)&&(!(data instanceof String)||((String)data).isEmpty()))throw new IllegalArgumentException("附件缺少原始文件数据，请重新选择");
   return new JSONObject().put("file_data",data).put("filename",name.isEmpty()?"attachment":name);
  }
  /** The local attachment path uses standard base64, not URLs or encoded JSON strings. */
- static String embeddedMime(String data){
+ static String embeddedMime(Object value){
+  if(value instanceof FileAttachmentData)return ((FileAttachmentData)value).mime;
+  if(!(value instanceof String))throw new IllegalArgumentException("附件数据无效");String data=(String)value;
   int semi=data.indexOf(';'),comma=data.indexOf(',');
   if(!data.startsWith("data:")||semi<=5||comma<=semi||!";base64".equals(data.substring(semi,comma))||comma+1>=data.length())throw new IllegalArgumentException("附件需要有效的 base64 内嵌文件数据");
   int length=data.length()-comma-1,padding=data.endsWith("==")?2:data.endsWith("=")?1:0;

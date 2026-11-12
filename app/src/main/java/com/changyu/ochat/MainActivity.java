@@ -53,7 +53,7 @@ public class MainActivity extends AppCompatActivity {
   }
   String text=run.partial.toString(),thought=run.reasoningText.toString();generationBody.setVisibility(text.isEmpty()&&!thought.isEmpty()?View.GONE:View.VISIBLE);renderMarkdown(generationBody,text.isEmpty()?run.status:text);
   bindReasoning(activeReply.visibleRow,run.id,thought,text.isEmpty(),false,ChatApiClient.RESPONSES.equals(run.protocol)||ChatApiClient.GEMINI.equals(run.protocol));
-  if((run.search.builtin||run.search.tavily)&&(!run.status.equals(activeReply.searchStatus)||activeReply.sources!=run.sources)){activeReply.searchStatus=run.status;activeReply.sources=run.sources;refreshSearch(activeReply);}
+  if((run.search.grounded()||run.search.tavily)&&(!run.status.equals(activeReply.searchStatus)||activeReply.sources!=run.sources)){activeReply.searchStatus=run.status;activeReply.sources=run.sources;refreshSearch(activeReply);}
   scrollBottom();
  }
  @Override protected void onStop(){ChatGenerationService.detach(generationListener);super.onStop();}
@@ -150,7 +150,7 @@ public class MainActivity extends AppCompatActivity {
   dialog.setOnDismissListener(d->expandedComposerDialog=null);dialog.show();
  }
  private void refreshSearch(ReplyContext reply){if(reply.visibleRow!=null)addSearchCard(reply.visibleRow,reply.searchStatus,reply.sources,"");}
- private void addSearchCard(LinearLayout row,String status,SearchSources sources,String legacy){if(row.getChildCount()==0||!(row.getChildAt(0) instanceof LinearLayout))return;if((status==null||status.isEmpty())&&sources.items.length()==0&&legacy.isEmpty())return;LinearLayout box=(LinearLayout)row.getChildAt(0);View oldHeading=box.findViewWithTag("search-heading"),oldContent=box.findViewWithTag("search-content");boolean expanded=oldContent!=null&&oldContent.getVisibility()==View.VISIBLE;if(oldHeading!=null)box.removeView(oldHeading);if(oldContent!=null)box.removeView(oldContent);TextView heading=label((status==null||status.isEmpty()?"历史搜索来源":status)+" · 点击展开",12,muted,false);heading.setTag("search-heading");heading.setPadding(0,dp(8),0,dp(8));heading.setMinHeight(dp(48));box.addView(heading,0);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setTag("search-content");content.setVisibility(expanded?View.VISIBLE:View.GONE);box.addView(content,1);for(int i=0;i<sources.items.length();i++){JSONObject source=sources.items.optJSONObject(i);String url=source.optString("url"),domain=Uri.parse(url).getHost();String snippet=source.optString("snippet").replaceAll("\\s+"," ").trim();if(snippet.length()>300)snippet=snippet.substring(0,300)+"…";TextView item=label((i+1)+". "+source.optString("title",domain)+"\n"+domain+(snippet.isEmpty()?"":"\n"+snippet),13,ink,false);item.setPadding(dp(12),dp(10),dp(12),dp(10));item.setMaxLines(7);item.setEllipsize(android.text.TextUtils.TruncateAt.END);item.setBackground(roundDrawable(card,12));item.setContentDescription(item.getText()+"，打开来源");item.setOnClickListener(v->SafeLinks.open(this,url));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(6);content.addView(item,lp);}if(sources.items.length()==0&&!legacy.isEmpty()){String clean=legacy.trim();if(clean.startsWith("{")||clean.startsWith("["))clean="历史来源格式不可用";else clean=clean.replaceAll("(?m)^\\s*[-#*>]+\\s*","");if(clean.length()>600)clean=clean.substring(0,600)+"…";TextView fallback=label(clean,13,muted,false);fallback.setTextIsSelectable(true);content.addView(fallback);}heading.setOnClickListener(v->content.setVisibility(content.getVisibility()==View.GONE?View.VISIBLE:View.GONE));}
+ private void addSearchCard(LinearLayout row,String status,SearchSources sources,String legacy){if(row.getChildCount()==0||!(row.getChildAt(0) instanceof LinearLayout))return;if((status==null||status.isEmpty())&&sources.items.length()==0&&legacy.isEmpty())return;LinearLayout box=(LinearLayout)row.getChildAt(0);View oldHeading=box.findViewWithTag("search-heading"),oldContent=box.findViewWithTag("search-content");boolean expanded=oldContent!=null&&oldContent.getVisibility()==View.VISIBLE;if(oldHeading!=null)box.removeView(oldHeading);if(oldContent!=null)box.removeView(oldContent);TextView heading=label((status==null||status.isEmpty()?"历史搜索来源":status)+" · 点击展开",12,muted,false);heading.setTag("search-heading");heading.setPadding(0,dp(8),0,dp(8));heading.setMinHeight(dp(48));box.addView(heading,0);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setTag("search-content");content.setVisibility(expanded?View.VISIBLE:View.GONE);box.addView(content,1);for(int i=0;i<sources.items.length();i++){JSONObject source=sources.items.optJSONObject(i);String url=source.optString("url"),domain=Uri.parse(url).getHost();String snippet=source.optString("snippet").replaceAll("\\s+"," ").trim();if(snippet.length()>300)snippet=snippet.substring(0,300)+"…";TextView item=label((i+1)+". "+source.optString("title",domain)+"\n"+domain+(snippet.isEmpty()?"":"\n"+snippet),13,ink,false);item.setPadding(dp(12),dp(10),dp(12),dp(10));item.setMaxLines(7);item.setEllipsize(android.text.TextUtils.TruncateAt.END);item.setBackground(roundDrawable(card,12));item.setContentDescription(item.getText()+"，打开来源");item.setOnClickListener(v->SafeLinks.open(this,url));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(6);content.addView(item,lp);}String suggestions="";for(int i=0;i<sources.items.length();i++){JSONObject source=sources.items.optJSONObject(i);if(source!=null&&!source.optString("searchSuggestionsHtml").isEmpty()){suggestions=source.optString("searchSuggestionsHtml");break;}}if(!suggestions.isEmpty()){String html=suggestions;TextView entry=label("Google 搜索建议  ›",13,purple,true);entry.setMinHeight(dp(44));entry.setGravity(Gravity.CENTER_VERTICAL);entry.setOnClickListener(v->GoogleSearchSuggestions.show(this,html));content.addView(entry);}if(sources.items.length()==0&&!legacy.isEmpty()){String clean=legacy.trim();if(clean.startsWith("{")||clean.startsWith("["))clean="历史来源格式不可用";else clean=clean.replaceAll("(?m)^\\s*[-#*>]+\\s*","");if(clean.length()>600)clean=clean.substring(0,600)+"…";TextView fallback=label(clean,13,muted,false);fallback.setTextIsSelectable(true);content.addView(fallback);}heading.setOnClickListener(v->content.setVisibility(content.getVisibility()==View.GONE?View.VISIBLE:View.GONE));}
  static JSONArray groundedMessages(JSONArray history,String results)throws JSONException{return SearchGrounding.messages(history,results);}
  private void showModelSelector(){hideKeyboard();ModelPicker.show(this,scoped(),this::refreshModelLabels,()->startActivity(new Intent(this,ProviderListActivity.class)));}
  private boolean isAnthropic(){JSONObject p=activeProvider();String type=(provider+" "+p.optString("name")+" "+p.optString("api",prefs.getString("api",""))+" "+model).toLowerCase(Locale.ROOT);return type.contains("anthropic")||type.contains("claude");}
@@ -181,10 +181,8 @@ public class MainActivity extends AppCompatActivity {
   if(isDestroyed()||attachmentLoading||activeAttachmentImport!=null||attachmentImports.isEmpty())return;
   IncomingShare.Request request=attachmentImports.removeFirst();activeAttachmentImport=request;
   if(request.shared&&!request.started){
-   request.started=true;request.autoSend=composer.getText().toString().trim().isEmpty()&&pendingAttachments.isEmpty();
-   request.sessionId=prefs.getString("currentSessionId","");refreshModelLabels();request.modelId=model;request.providerId=activeProvider().optString("id");
-   if(request.autoSend){request.expectedDraft=request.text.trim().isEmpty()?"请阅读并概括分享文件的主要内容。":request.text;composer.setText(request.expectedDraft);}
-   else if(!request.text.trim().isEmpty())composer.append((composer.length()==0?"":"\n")+request.text);
+   request.started=true;request.autoSend=false;
+   if(!request.text.trim().isEmpty())composer.append((composer.length()==0?"":"\n")+request.text);
   }
   List<Uri> uris=new ArrayList<>();List<String> rejected=new ArrayList<>();
   for(Uri uri:request.uris){
@@ -192,7 +190,7 @@ public class MainActivity extends AppCompatActivity {
    boolean duplicate=false;for(JSONObject d:pendingAttachments)if(uri.toString().equals(d.optString("sourceUri",d.optString("uri"))))duplicate=true;
    if(duplicate)continue;if(pendingAttachments.size()+uris.size()>=AttachmentBatch.MAX_COUNT){rejected.add("最多添加 "+AttachmentBatch.MAX_COUNT+" 个附件");continue;}uris.add(uri);
   }
-  if(uris.isEmpty()){if(!rejected.isEmpty())showAttachmentImportErrors(rejected);preparePendingAttachments(()->finishAttachmentImport(request,!rejected.isEmpty()));return;}
+  if(uris.isEmpty()){if(!rejected.isEmpty())showAttachmentImportErrors(rejected);preparePendingAttachments(()->finishAttachmentImport(request));return;}
   final int generation=++attachmentGeneration;if(attachmentTask!=null)attachmentTask.cancel(true);attachmentLoading=true;renderAttachmentPreview();updateSendButton();
   attachmentTask=attachmentWorker.submit(()->{
    List<JSONObject> imported=new ArrayList<>();List<String> errors=new ArrayList<>(rejected);
@@ -200,7 +198,7 @@ public class MainActivity extends AppCompatActivity {
    runOnUiThread(()->{
     if(isDestroyed()||generation!=attachmentGeneration){for(JSONObject d:imported)AttachmentSelection.discard(getApplicationContext(),d);return;}
     pendingAttachments.addAll(imported);attachmentLoading=false;if(!errors.isEmpty())showAttachmentImportErrors(errors);
-    preparePendingAttachments(()->finishAttachmentImport(request,!errors.isEmpty()));
+    preparePendingAttachments(()->finishAttachmentImport(request));
    });
   });
  }
@@ -208,15 +206,9 @@ public class MainActivity extends AppCompatActivity {
   TextView text=label(android.text.TextUtils.join("\n\n",errors),14,ink,false);text.setTextIsSelectable(true);ScrollView scroll=new ScrollView(this);scroll.addView(text);
   new PanelDialog(this,"部分附件导入失败","已成功导入的附件可以继续使用",scroll).compact().action(AlertDialog.BUTTON_POSITIVE,"知道了",null).show();
  }
- private void finishAttachmentImport(IncomingShare.Request request,boolean importFailed){
+ private void finishAttachmentImport(IncomingShare.Request request){
   if(activeAttachmentImport!=request)return;activeAttachmentImport=null;
-  if(request.shared){
-   refreshModelLabels();boolean ready=!importFailed&&!pendingAttachments.isEmpty();
-   for(JSONObject d:pendingAttachments){String payload=preparedAttachments.get(d.optString("uri"));if(payload==null||AttachmentBatch.isFailure(payload))ready=false;}
-   boolean unchanged=request.expectedDraft.equals(composer.getText().toString())&&request.sessionId.equals(prefs.getString("currentSessionId",""))&&request.modelId.equals(model)&&request.providerId.equals(activeProvider().optString("id"));
-   if(request.autoSend&&ready&&unchanged)sendMessage();
-   else if(!pendingAttachments.isEmpty())Toast.makeText(this,"分享文件已添加，草稿已保留，请确认后发送",Toast.LENGTH_LONG).show();
-  }
+  if(request.shared&&!pendingAttachments.isEmpty())Toast.makeText(this,"分享文件已添加，请点击发送",Toast.LENGTH_LONG).show();
   startNextAttachmentImport();
  }
  private void preparePendingAttachments(){
@@ -227,12 +219,11 @@ public class MainActivity extends AppCompatActivity {
   final int generation=++attachmentGeneration;if(attachmentTask!=null)attachmentTask.cancel(true);attachmentLoading=!pendingAttachments.isEmpty();preparedAttachments.clear();renderAttachmentPreview();
   final List<JSONObject> captured=new ArrayList<>();try{for(JSONObject d:pendingAttachments)captured.add(new JSONObject(d.toString()));}catch(JSONException error){attachmentLoading=false;return;}
   attachmentTask=attachmentWorker.submit(()->{
-   Map<String,String> payloads=new HashMap<>();Map<String,JSONObject> snapshots=new HashMap<>();List<JSONObject> createdSnapshots=new ArrayList<>();int used=0;boolean notice=false;
+   Map<String,String> payloads=new HashMap<>();Map<String,JSONObject> snapshots=new HashMap<>();List<JSONObject> createdSnapshots=new ArrayList<>();boolean notice=false;
    for(JSONObject d:captured){
     if(generation!=attachmentGeneration||Thread.currentThread().isInterrupted()){discardPreparedSnapshots(createdSnapshots);return;}
     String p;try{
-     p=AttachmentSnapshots.read(getApplicationContext(),d);boolean hadSnapshot=p!=null;if(p==null)p=AttachmentBatch.payload(getContentResolver(),d);
-     int bytes=AttachmentBatch.estimatedBytes(d,p);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used)throw new IOException("附件超出总大小限制，请减少附件或选择较小文件");used+=bytes;
+     p=AttachmentSnapshots.read(getApplicationContext(),d);boolean hadSnapshot=p!=null;if(p==null)p=AttachmentBatch.payload(getApplicationContext(),d);
      if(!hadSnapshot){AttachmentSnapshots.capture(getApplicationContext(),d,p);if(!d.optString("payloadSnapshotFile").isEmpty())createdSnapshots.add(d);}
      snapshots.put(d.optString("uri"),d);
     }catch(Exception error){p=AttachmentBatch.failure(error.getMessage()==null?"附件不可用，请重新选择":error.getMessage());}
@@ -288,7 +279,7 @@ public class MainActivity extends AppCompatActivity {
   }
   attachmentPreview.addView(scroll,new LinearLayout.LayoutParams(-1,dp(108)));
  }
- private void saveAttachment(String sessionId,JSONArray descriptors,Map<String,String> payloads){if(descriptors.length()==0)return;try{JSONArray all=readSessions();for(int i=0;i<all.length();i++){JSONObject session=all.optJSONObject(i);if(session!=null&&sessionId.equals(session.optString("id"))){JSONArray messages=session.optJSONArray("messages");if(messages!=null&&messages.length()>0){JSONArray saved=new JSONArray();int total=0;for(int j=0;j<descriptors.length();j++){JSONObject descriptor=descriptors.optJSONObject(j);if(descriptor==null)continue;JSONObject copy=new JSONObject(descriptor.toString());String payload=payloads.get(descriptor.optString("uri"));if(payload==null||AttachmentBatch.isFailure(payload))throw new IOException("附件内容未准备好，不能保存为已发送附件");total+=AttachmentBatch.estimatedBytes(descriptor,payload);if(total>AttachmentBatch.MAX_TOTAL_CHARS)throw new IOException("会话附件总量超过限制");if(!AttachmentSnapshots.has(copy))copy.put("payloadSnapshot",payload);saved.put(copy);}messages.getJSONObject(messages.length()-1).put("attachments",saved);persistSessions(all);}return;}}}catch(Exception e){android.util.Log.w("Attachment","Unable to persist attachment payload snapshot",e);}}
+ private void saveAttachment(String sessionId,JSONArray descriptors,Map<String,String> payloads){if(descriptors.length()==0)return;try{JSONArray all=readSessions();for(int i=0;i<all.length();i++){JSONObject session=all.optJSONObject(i);if(session!=null&&sessionId.equals(session.optString("id"))){JSONArray messages=session.optJSONArray("messages");if(messages!=null&&messages.length()>0){JSONArray saved=new JSONArray();for(int j=0;j<descriptors.length();j++){JSONObject descriptor=descriptors.optJSONObject(j);if(descriptor==null)continue;JSONObject copy=new JSONObject(descriptor.toString());String payload=payloads.get(descriptor.optString("uri"));if(payload==null||AttachmentBatch.isFailure(payload))throw new IOException("附件内容未准备好，不能保存为已发送附件");if(!AttachmentSnapshots.has(copy))copy.put("payloadSnapshot",payload);saved.put(copy);}messages.getJSONObject(messages.length()-1).put("attachments",saved);persistSessions(all);}return;}}}catch(Exception e){android.util.Log.w("Attachment","Unable to persist attachment payload snapshot",e);}}
  private void appendAttachment(JSONObject descriptor){
   if(descriptor==null||messageList.getChildCount()==0)return;
   View row=messageList.getChildAt(messageList.getChildCount()-1);if(!(row instanceof LinearLayout))return;
@@ -455,12 +446,12 @@ public class MainActivity extends AppCompatActivity {
   JSONObject p=activeProvider();launchGeneration(request,p.optString("api"),p.optString("apiKey"),history,session,Collections.emptyMap(),query);
  }
  private void restoreHistoryAttachments(JSONObject session,JSONArray history){restoreHistoryAttachments(session,history,null,Collections.emptyMap());}
- private void restoreHistoryAttachments(JSONObject session,JSONArray history,ReplyContext request,Map<String,String> prepared){int used=0;
+ private void restoreHistoryAttachments(JSONObject session,JSONArray history,ReplyContext request,Map<String,String> prepared){
   JSONArray messages=session==null?null:session.optJSONArray("messages");if(messages==null)return;int index=history.length()>0&&history.optJSONObject(0)!=null&&"system".equals(history.optJSONObject(0).optString("role"))?1:0;
   for(int i=0;i<messages.length();i++){JSONObject message=messages.optJSONObject(i);if(message==null||message.optBoolean("error",false))continue;JSONObject entry=history.optJSONObject(index++);JSONArray attachments=message.optJSONArray("attachments");if(entry==null||!message.optBoolean("user")||attachments==null)continue;
    try{JSONArray content=new JSONArray().put(new JSONObject().put("type","text").put("text",message.optString("text")));
     for(int j=0;j<Math.min(10,attachments.length());j++){if(isDestroyed()||Thread.currentThread().isInterrupted()||(request!=null&&request.cancel.isCancelled()))return;JSONObject attachment=attachments.optJSONObject(j);if(attachment==null)continue;Uri uri=Uri.parse(attachment.optString("uri"));if(!"content".equals(uri.getScheme()))continue;String mime=attachment.optString("mime");try{
-     String payload=AttachmentSnapshots.read(getApplicationContext(),attachment);if(payload==null||payload.isEmpty())payload=prepared.get(attachment.optString("uri"));if(payload==null)payload=AttachmentBatch.payload(getContentResolver(),attachment);if(AttachmentBatch.isFailure(payload))throw new IOException(AttachmentBatch.failureMessage(payload));int bytes=AttachmentBatch.estimatedBytes(attachment,payload);if(bytes>AttachmentBatch.MAX_TOTAL_CHARS-used)throw new IOException("附件总大小超过限制");used+=bytes;content.put(AttachmentBatch.part(attachment,payload,request==null?ChatApiClient.RESPONSES:request.protocol));
+     String payload=AttachmentSnapshots.read(getApplicationContext(),attachment);if(payload==null||payload.isEmpty())payload=prepared.get(attachment.optString("uri"));if(payload==null)payload=AttachmentBatch.payload(getApplicationContext(),attachment);if(AttachmentBatch.isFailure(payload))throw new IOException(AttachmentBatch.failureMessage(payload));content.put(AttachmentBatch.part(getApplicationContext(),attachment,payload,request==null?ChatApiClient.RESPONSES:request.protocol));
     }catch(Exception unavailable){content.put(new JSONObject().put("type","text").put("text","附件未发送：格式不支持或文件授权已失效，请重新选择。"));}}
     entry.put("content",content);
    }catch(JSONException ignored){}
@@ -522,7 +513,7 @@ public class MainActivity extends AppCompatActivity {
   PanelDialog dialog=new PanelDialog(this,"删除对话？",session.optString("title",""),message).compact();
   dialog.action(AlertDialog.BUTTON_NEGATIVE,"取消",null).action(AlertDialog.BUTTON_POSITIVE,"删除",()->deleteSession(session.optString("id")));dialog.show();
  }
- private void updateSession(String id,String title){JSONArray sessions=readSessions();for(int i=0;i<sessions.length();i++){JSONObject s=sessions.optJSONObject(i);if(s!=null&&id.equals(s.optString("id")))try{s.put("title",title).put("titleManual",true).put("titleFallback",false);}catch(Exception ignored){}}persistSessions(sessions);refreshHistory();}
+ private void updateSession(String id,String title){JSONArray sessions=readSessions();for(int i=0;i<sessions.length();i++){JSONObject s=sessions.optJSONObject(i);if(s!=null&&id.equals(s.optString("id")))try{s.put("title",title).put("titleManual",true).put("titleFallback",false);}catch(Exception ignored){}}persistSessions(sessions);refreshConversationTitle();refreshHistory();}
  private void deleteSession(String id){
   if(ChatGenerationService.active(id)!=null){Toast.makeText(this,"请先停止这段对话的回复",Toast.LENGTH_SHORT).show();return;}
   JSONArray old=readSessions(),updated=new JSONArray();for(int i=0;i<old.length();i++){JSONObject session=old.optJSONObject(i);if(session!=null&&!id.equals(session.optString("id")))updated.put(session);}
@@ -570,7 +561,7 @@ public class MainActivity extends AppCompatActivity {
  private JSONArray readSessions(){if(prefs==null)return new JSONArray();JSONArray sessions=SessionRepository.get(prefs).read();return sessions;}
  private void persistSessions(JSONArray all){try{for(int i=0;i<all.length();i++){JSONObject session=all.optJSONObject(i);if(session!=null)ConversationBranches.sync(session);}}catch(JSONException failure){throw new IllegalStateException("无法保存版本",failure);}SessionRepository.get(prefs).replace(all);}
  private void activateSession(JSONArray sessions,JSONObject session){SessionRepository.get(prefs).replace(sessions);prefs.edit().putString("currentSessionId",session.optString("id")).apply();}
- private JSONObject newSession()throws JSONException{return new JSONObject().put("id",UUID.randomUUID().toString()).put("title","新对话").put("createdAt",System.currentTimeMillis()).put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date())).put("messages",new JSONArray()).put("config",SessionConfig.capture(prefs));}
+ private JSONObject newSession()throws JSONException{return new JSONObject().put("id",UUID.randomUUID().toString()).put("title","新对话").put("createdAt",System.currentTimeMillis()).put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date())).put("messages",new JSONArray()).put("config",SessionConfig.captureForNew(prefs,MessageEdits.findSession(readSessions(),prefs.getString("currentSessionId",""))));}
  private boolean reusableEmpty(JSONObject session){JSONArray messages=session==null?null:session.optJSONArray("messages");return messages!=null&&messages.length()==0&&"新对话".equals(session.optString("title","新对话"))&&!session.optBoolean("titleManual",false)&&!session.optBoolean("titleAutomatic",false);}
  private JSONObject ensureCurrentSession(JSONArray sessions)throws JSONException{
   String id=prefs.getString("currentSessionId","");JSONObject empty=null;
@@ -587,8 +578,8 @@ public class MainActivity extends AppCompatActivity {
   try{
    JSONArray all=readSessions();JSONObject current=null;ChatGenerationService.Run running=ChatGenerationService.active();
    if(running!=null&&resumingGeneration(getIntent()))current=MessageEdits.findSession(all,running.sessionId);
-   if(current==null&&coldStart){for(int i=0;i<all.length();i++){JSONObject candidate=all.optJSONObject(i);if(reusableEmpty(candidate)){current=candidate;break;}}
-    if(current==null){current=newSession();all.put(current);}current.put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date()));
+   if(current==null&&coldStart){JSONObject inherited=SessionConfig.captureForNew(prefs,MessageEdits.findSession(all,prefs.getString("currentSessionId","")));for(int i=0;i<all.length();i++){JSONObject candidate=all.optJSONObject(i);if(reusableEmpty(candidate)){current=candidate;break;}}
+    if(current==null){current=newSession();all.put(current);}current.put("config",inherited).put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date()));
    }
    if(current==null)current=ensureCurrentSession(all);
    all=collapseEmptySessions(all,current);activateSession(all,current);restoreSession(current);refreshHistory();
@@ -600,7 +591,7 @@ public class MainActivity extends AppCompatActivity {
   UiStyle.textIfChanged(conversationTitle,title);
  }
  private String saveCurrentMessage(String t,boolean user,String att){try{JSONArray a=readSessions();JSONObject s=ensureCurrentSession(a);s.put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date()));JSONObject m=new JSONObject().put("id",UUID.randomUUID().toString()).put("text",t).put("user",user).put("timestamp",System.currentTimeMillis());if(att!=null)m.put("attachment",att);s.optJSONArray("messages").put(m);persistSessions(a);refreshHistory();if(user){JSONArray messages=s.optJSONArray("messages");for(int i=0;i<messages.length();i++){JSONObject first=messages.optJSONObject(i);if(first!=null&&first.optBoolean("user")){requestTopicTitle(first.optString("text",""),s.optString("id",""));break;}}}return s.optString("id","");}catch(Exception ignored){return "";}}private void saveAssistantMessage(ReplyContext reply,String t,boolean error){if(reply.sessionId==null||reply.sessionId.isEmpty())return;try{JSONArray a=readSessions();for(int i=0;i<a.length();i++){JSONObject s=a.optJSONObject(i);if(s!=null&&reply.sessionId.equals(s.optString("id"))){if(!reply.branchId.equals(s.optString("activeBranchId")))return;s.put("updatedAt",System.currentTimeMillis());JSONArray messages=s.optJSONArray("messages");if(messages!=null)messages.put(new JSONObject().put("id",UUID.randomUUID().toString()).put("text",t).put("user",false).put("timestamp",reply.timestamp).put("modelId",reply.modelId).put("error",error).put("searchStatus",reply.searchStatus).put("sources",reply.sources.items));persistSessions(a);refreshHistory();return;}}}catch(Exception e){android.util.Log.e("Sessions","Unable to save assistant reply",e);}}
- private void resetConversation(){try{JSONArray all=readSessions();JSONObject current=ensureCurrentSession(all),target=reusableEmpty(current)?current:null;all=collapseEmptySessions(all,current);if(target==null)for(int i=0;i<all.length();i++){JSONObject s=all.optJSONObject(i);if(reusableEmpty(s)){target=s;break;}}if(target==null){target=newSession();all.put(target);}target.put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date()));activateSession(all,target);restoreSession(target);refreshHistory();}catch(JSONException e){android.util.Log.e("Sessions","Unable to activate new session",e);}}
+ private void resetConversation(){try{JSONArray all=readSessions();JSONObject current=ensureCurrentSession(all),inherited=SessionConfig.captureForNew(prefs,current),target=reusableEmpty(current)?current:null;all=collapseEmptySessions(all,current);if(target==null)for(int i=0;i<all.length();i++){JSONObject s=all.optJSONObject(i);if(reusableEmpty(s)){target=s;break;}}if(target==null){target=newSession();all.put(target);}target.put("config",inherited).put("updatedAt",System.currentTimeMillis()).put("time",new SimpleDateFormat("MM-dd HH:mm",Locale.getDefault()).format(new Date()));activateSession(all,target);restoreSession(target);refreshHistory();}catch(JSONException e){android.util.Log.e("Sessions","Unable to activate new session",e);}}
  /** Only placeholders and our persisted provisional titles may be automatically replaced. */
  static boolean canAutomaticallyTitle(JSONObject session){return session!=null&&!session.optBoolean("titleManual",false)&&!session.optBoolean("titleAutomatic",false)&&(session.optBoolean("titleFallback",false)||session.optString("title","").trim().isEmpty()||"新对话".equals(session.optString("title")));}
  private static JSONObject firstUserMessage(JSONObject session){JSONArray messages=session.optJSONArray("messages");if(messages!=null)for(int i=0;i<messages.length();i++){JSONObject m=messages.optJSONObject(i);if(m!=null&&m.optBoolean("user"))return m;}return null;}
@@ -641,7 +632,7 @@ public class MainActivity extends AppCompatActivity {
  private void showMessageDetails(JSONObject message){
   String time=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.getDefault()).format(new Date(message.optLong("timestamp")));
   String state=message.optString("completionState",message.optBoolean("interrupted")?"interrupted":"complete");
-  TextView details=label("时间："+time+(message.optBoolean("user")?"":"\n模型："+message.optString("modelName",message.optString("modelId"))+"\n状态："+new GenerationResult(state,message.optString("finishReason"),message.optJSONObject("usage")).label()+"\n\n"+usageText(message)+((message.optBoolean("error")||message.optBoolean("interrupted"))&&!message.optString("finishReason").isEmpty()?"\n\n错误 / 中断详情：\n"+message.optString("finishReason"):"")),14,ink,false);details.setTextIsSelectable(true);details.setPadding(dp(8),dp(8),dp(8),dp(16));ScrollView scroll=new ScrollView(this);scroll.addView(details);
+  TextView details=label("时间："+time+(message.optBoolean("user")?"":"\n模型："+message.optString("modelName",message.optString("modelId"))+"\n状态："+new GenerationResult(state,message.optString("finishReason"),message.optJSONObject("usage")).label()+"\n\n"+usageText(message)+((message.optBoolean("error")||message.optBoolean("interrupted"))&&!message.optString("finishReason").isEmpty()?"\n\n错误 / 中断详情：\n"+message.optString("finishReason"):"")),14,ink,false);details.setText(details.getText()+BuiltinTools.details(message.optJSONArray("toolEvents")));details.setTextIsSelectable(true);details.setPadding(dp(8),dp(8),dp(8),dp(16));ScrollView scroll=new ScrollView(this);scroll.addView(details);
   new PanelDialog(this,"消息详情","",scroll).compact().action(AlertDialog.BUTTON_POSITIVE,"完成",null).show();
  }
  private void showSessionDetails(JSONObject session){

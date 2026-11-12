@@ -10,6 +10,23 @@ final class SessionConfig implements SharedPreferences {
  final SharedPreferences global;final JSONObject session,values;
  SessionConfig(SharedPreferences p,JSONObject s){global=p;session=s;JSONObject v=s.optJSONObject("config");if(v==null){v=capture(p);try{JSONArray messages=s.optJSONArray("messages");for(int i=messages==null?-1:messages.length()-1;i>=0;i--){JSONObject message=messages.optJSONObject(i);String id=message==null?"":message.optString("modelId");if(message==null||message.optBoolean("user")||id.isEmpty())continue;v.put("modelId",id);JSONArray providers=ModelStore.read(p);for(int j=0;j<providers.length();j++){JSONObject provider=providers.optJSONObject(j);JSONObject model=provider==null?new JSONObject():ModelCapabilities.find(provider,id);if(model.has("id")){v.put("providerId",provider.optString("id")).put("provider",provider.optString("name")).put("model",model.optString("displayName",id)).put("outputTokens",model.optString("outputTokens",ContextBudget.DEFAULT_OUTPUT_TEXT));break;}}break;}s.put("config",v);if(!s.optString("id").isEmpty())SessionRepository.get(p).upsert(s);}catch(JSONException ignored){}}values=v;try{if(ReasoningSelection.reconcile(values,global)&&!session.optString("id").isEmpty())SessionRepository.get(global).upsert(session);}catch(JSONException ignored){}}
  static JSONObject capture(SharedPreferences p){JSONObject v=new JSONObject();for(String key:KEYS){Object x=p.getAll().get(key);if(x!=null)try{v.put(key,x);}catch(JSONException ignored){}}if(!v.has("webSearchEnabled"))try{v.put("webSearchEnabled",false);}catch(JSONException ignored){}try{v.put("reasoningEffort","default").put(ReasoningSelection.BINDING,ReasoningSelection.identity(v.optString("providerId"),v.optString("modelId")));}catch(JSONException ignored){}return v;}
+ /** New conversations use global defaults plus the last active conversation's current model. */
+ static JSONObject captureForNew(SharedPreferences global,JSONObject previous)throws JSONException{
+  JSONObject next=capture(global);if(previous==null)return next;
+  SessionConfig source=new SessionConfig(global,previous);String providerId=source.getString("providerId",""),modelId=source.getString("modelId","");
+  JSONArray providers=ModelStore.read(global);
+  for(int i=0;i<providers.length();i++){
+   JSONObject provider=providers.optJSONObject(i);if(provider==null||!providerId.equals(provider.optString("id")))continue;
+   JSONObject model=ModelCapabilities.find(provider,modelId);if(!model.has("id"))model=ModelStore.selected(provider);
+   if(!model.optString("id").isEmpty()){
+    next.put("providerId",providerId).put("provider",provider.optString("name")).put("modelId",model.optString("id")).put("model",model.optString("displayName",model.optString("id")))
+     .put("outputTokens",model.optString("outputTokens",ContextBudget.DEFAULT_OUTPUT_TEXT)).put("reasoningEffort","default")
+     .put(ReasoningSelection.BINDING,ReasoningSelection.identity(providerId,model.optString("id")));
+   }
+   break;
+  }
+  return next;
+ }
  JSONObject provider(){JSONArray all=ModelStore.read(global);for(int i=0;i<all.length();i++){JSONObject p=all.optJSONObject(i);if(p!=null&&getString("providerId","").equals(p.optString("id")))return p;}return new JSONObject();}
  JSONObject model(){return ModelCapabilities.find(provider(),getString("modelId",""));}
  public Map<String,?> getAll(){Map<String,Object> all=new HashMap<>(global.getAll());for(String key:KEYS)if(values.has(key))all.put(key,values.opt(key));return all;}

@@ -10,7 +10,27 @@ import java.util.*;
 final class AttachmentSnapshots {
  static final int INLINE_CHARS=128*1024;
  static final long ORPHAN_GRACE_MILLIS=24L*60*60*1000;
- private static final String KEY_PATTERN="[a-f0-9-]{36}\\.payload";
+ private static final String KEY_PATTERN="[a-f0-9-]{36}\\.(?:payload|pdf)";
+ static final String PDF_MARKER="\u0000OChatPdf:";
+ static boolean isPdfPayload(String payload){return payload!=null&&payload.startsWith(PDF_MARKER);}
+ static FileAttachmentData pdfData(Context context,String payload)throws IOException{
+  if(!isPdfPayload(payload))throw new IOException("PDF 引用无效");
+  File file=resolve(context,payload.substring(PDF_MARKER.length()));if(!file.getName().endsWith(".pdf")||!file.isFile())throw new IOException("PDF 快照不可用，请重新添加");
+  return new FileAttachmentData(file,"application/pdf",true);
+ }
+ static String capturePdf(Context context,JSONObject descriptor,InputStream input)throws Exception{
+  if(input==null)throw new IOException("PDF 无法读取");
+  File directory=folder(context);if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("无法保存 PDF");
+  String key=UUID.randomUUID()+".pdf";File target=new File(directory,key),partial=new File(directory,key+".part");boolean saved=false;
+  try{
+   BufferedInputStream source=new BufferedInputStream(input);source.mark(1024);byte[] header=new byte[1024];int count=0,n;
+   while(count<header.length&&(n=source.read(header,count,header.length-count))!=-1){checkCancelled();count+=n;}
+   if(!new String(header,0,count,StandardCharsets.ISO_8859_1).contains("%PDF-"))throw new IOException("文件不是可识别的 PDF，请检查格式");source.reset();
+   try(OutputStream output=new FileOutputStream(partial)){byte[] buffer=new byte[16384];while((n=source.read(buffer))!=-1){checkCancelled();output.write(buffer,0,n);}}
+   checkCancelled();if(!partial.renameTo(target))throw new IOException("无法保存 PDF");
+   descriptor.put(FILE,key).remove("payloadSnapshot");descriptor.remove(CHARS);keepAlive(descriptor);saved=true;return PDF_MARKER+key;
+  }finally{partial.delete();if(!saved)target.delete();}
+ }
  // Weak leases protect unsent/being-read descriptors without retaining an Activity or draft forever.
  private static final Map<JSONObject,String> LIVE=new WeakHashMap<>();
  static void keepAlive(Collection<JSONObject> descriptors){synchronized(LIVE){for(JSONObject d:descriptors)keepAlive(d);}}
@@ -41,6 +61,7 @@ final class AttachmentSnapshots {
  static boolean has(JSONObject descriptor){return descriptor.has("payloadSnapshot")||!descriptor.optString(FILE).isEmpty();}
  static void capture(Context context,JSONObject descriptor,String payload)throws Exception{
   if(payload==null||AttachmentBatch.isFailure(payload))throw new IOException("附件内容尚未准备好");
+  if(isPdfPayload(payload)){pdfData(context,payload);descriptor.put(FILE,payload.substring(PDF_MARKER.length()));descriptor.remove("payloadSnapshot");descriptor.remove(CHARS);keepAlive(descriptor);return;}
   String previous=descriptor.optString(FILE);
   if(payload.length()<=INLINE_CHARS){
    descriptor.put("payloadSnapshot",payload);descriptor.remove(FILE);descriptor.remove(CHARS);delete(context,previous);return;
@@ -59,10 +80,10 @@ final class AttachmentSnapshots {
   if(descriptor.has("payloadSnapshot"))return descriptor.optString("payloadSnapshot");
   String key=descriptor.optString(FILE);if(key.isEmpty())return null;
   keepAlive(descriptor);File file=resolve(context,key);if(!file.isFile())throw new IOException("已保存的附件内容不可用，请重新添加附件");
-  long max=((long)AttachmentBatch.MAX_TOTAL_CHARS+2)/3*4+256;
+  if(key.endsWith(".pdf"))return PDF_MARKER+key;
   try(Reader input=new InputStreamReader(new FileInputStream(file),StandardCharsets.UTF_8)){
    StringBuilder out=new StringBuilder();char[] buffer=new char[8192];int count;
-   while((count=input.read(buffer))!=-1){checkCancelled();if((long)out.length()+count>max)throw new IOException("附件快照超过大小限制");out.append(buffer,0,count);}return out.toString();
+   while((count=input.read(buffer))!=-1){checkCancelled();out.append(buffer,0,count);}return out.toString();
   }
  }
  /** Only removes our private snapshot, never an original or provider-owned attachment. */

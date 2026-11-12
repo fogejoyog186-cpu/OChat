@@ -33,7 +33,7 @@ final class JsonRequestBody extends RequestBody {
   if(depth>MAX_DEPTH)throw new IllegalArgumentException("JSON request nesting exceeds 64 levels");
   if(Thread.currentThread().isInterrupted())throw new IllegalArgumentException("JSON request preparation cancelled");
   if(value==null||value==JSONObject.NULL)return null;
-  if(value instanceof String||value instanceof Boolean)return value;
+  if(value instanceof String||value instanceof Boolean||value instanceof FileAttachmentData)return value;
   if(value instanceof JSONObject){
    Map<String,Object> object=new LinkedHashMap<>();Iterator<String> keys=((JSONObject)value).keys();
    while(keys.hasNext()){String key=keys.next();object.put(key,freeze(((JSONObject)value).opt(key),depth+1));}
@@ -53,7 +53,7 @@ final class JsonRequestBody extends RequestBody {
   long count;
   @Override public void write(int value)throws IOException{add(1);}
   @Override public void write(byte[] bytes,int offset,int size)throws IOException{add(size);}
-  private void add(int size)throws IOException{interrupted();if(size>Long.MAX_VALUE-count)throw new IOException("JSON request is too large");count+=size;}
+  private void add(long size)throws IOException{interrupted();if(size>Long.MAX_VALUE-count)throw new IOException("JSON request is too large");count+=size;}
  }
  private static final class Writer{
   private static final char[] HEX="0123456789abcdef".toCharArray();
@@ -66,6 +66,11 @@ final class JsonRequestBody extends RequestBody {
    interrupted();if(depth>MAX_DEPTH)throw new IOException("JSON request nesting exceeds 64 levels");
    if(value==null)ascii("null");
    else if(value instanceof String)string((String)value);
+   else if(value instanceof FileAttachmentData){
+    FileAttachmentData data=(FileAttachmentData)value;data.validate();put('"');ascii(data.prefix());finish();
+    if(output instanceof CountingOutputStream)((CountingOutputStream)output).add(data.encodedLength());else data.writeBase64(output);
+    put('"');
+   }
    else if(value instanceof Boolean)ascii((Boolean)value?"true":"false");
    else if(value instanceof Numeric)ascii(((Numeric)value).text);
    else if(value instanceof Map){

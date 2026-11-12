@@ -21,13 +21,21 @@ import static org.junit.Assert.*;
 /** Exercises persisted PDF attachments through the real foreground service preparation path. */
 @RunWith(AndroidJUnit4.class)
 public class PdfServiceAttachmentRegressionTest {
- private static final int URI_ONLY=0,SNAPSHOT=1,MISSING_CURRENT_FILE=2;
+ private static final int URI_ONLY=0,SNAPSHOT=1,MISSING_CURRENT_FILE=2,PDF_REJECTED=3,IMAGES_REJECTED=4,UNAUTHORIZED=5,PARTIAL=6;
  private static final class CaptureTransport extends ChatApiClient {
-  volatile int requests;volatile JSONArray sent;
+  volatile int requests,mode,images;volatile JSONArray sent;final List<File> pageFiles=new ArrayList<>();
   @Override public void streamChat(String base,String key,String model,JSONArray history,double temperature,int max,double top,String effort,String protocol,SearchOptions search,StreamCallback callback){
-   sent=history;requests++;callback.onDelta("parsed image PDF");callback.onDone();
+   sent=history;requests++;
+   if(mode>=PDF_REJECTED&&requests==1){if(mode==PARTIAL)callback.onDelta("partial");callback.onError("接口错误（"+(mode==UNAUTHORIZED?"401":"400")+"） · Unsupported Document");return;}
+   if(mode==IMAGES_REJECTED){callback.onError("接口错误（400） · images unsupported");return;}
+   if(mode==PDF_REJECTED)for(int i=0;i<history.length();i++){JSONArray parts=history.optJSONObject(i).optJSONArray("content");for(int j=0;parts!=null&&j<parts.length();j++){JSONObject p=parts.optJSONObject(j);if(p!=null&&p.optJSONObject("image_url")!=null){Object data=p.optJSONObject("image_url").opt("url");if(data instanceof FileAttachmentData){images++;pageFiles.add(((FileAttachmentData)data).file);}}}}
+   callback.onDelta("parsed image PDF");callback.onDone();
   }
  }
+ @Test public void unsupportedPdfRetriesAsImagesExactlyOnce()throws Exception{exercise(PDF_REJECTED);}
+ @Test public void unsupportedImagesRetainBothErrorsAndStopRetrying()throws Exception{exercise(IMAGES_REJECTED);}
+ @Test public void authenticationErrorNeverTriggersDocumentRetry()throws Exception{exercise(UNAUTHORIZED);}
+ @Test public void partialOutputNeverTriggersDocumentRetry()throws Exception{exercise(PARTIAL);}
  @Test public void imagePdfWithoutSnapshotOrPreparedMapIsActuallySent()throws Exception{exercise(URI_ONLY);}
  @Test public void persistedSnapshotSurvivesMissingOriginalAndEmptyPreparedMap()throws Exception{exercise(SNAPSHOT);}
  @Test public void missingCurrentPdfStopsBeforeCallingModelWithExplicitError()throws Exception{exercise(MISSING_CURRENT_FILE);}
@@ -39,7 +47,7 @@ public class PdfServiceAttachmentRegressionTest {
   assertNull("device regression must not interrupt an existing generation",ChatGenerationService.active());
   Map<String,?> backup=new HashMap<>(prefs.getAll());
   File original=null;JSONObject descriptor=null;ActivityScenario<MainActivity> scenario=null;
-  ChatGenerationService.Run[] request={null};CaptureTransport transport=new CaptureTransport();
+  ChatGenerationService.Run[] request={null};CaptureTransport transport=new CaptureTransport();transport.mode=mode;
   try{
    File directory=new File(context.getFilesDir(),"imported_attachments");assertTrue(directory.isDirectory()||directory.mkdirs());
    original=File.createTempFile("pdf-service-", ".pdf",directory);byte[] pdf=writeImagePdf(original);
@@ -57,10 +65,11 @@ public class PdfServiceAttachmentRegressionTest {
     .put("timestamp",System.currentTimeMillis()).put("attachments",new JSONArray().put(descriptor));
    JSONObject session=new JSONObject().put("id",sessionId).put("title","PDF service regression").put("messages",new JSONArray().put(message));
    prefs.edit().clear().putString("sessions",new JSONArray().put(session).toString()).putString("currentSessionId",sessionId).commit();
-   if(mode!=URI_ONLY)assertTrue(original.delete());
+   if(mode==SNAPSHOT||mode==MISSING_CURRENT_FILE)assertTrue(original.delete());
    // Deserialize the saved conversation rather than passing the in-memory descriptor through.
    JSONObject restored=MessageEdits.findSession(new JSONArray(prefs.getString("sessions","[]")),sessionId);
    JSONObject restoredDescriptor=restored.getJSONArray("messages").getJSONObject(0).getJSONArray("attachments").getJSONObject(0);
+   descriptor=restoredDescriptor;
    if(mode==SNAPSHOT)assertEquals(payload,AttachmentSnapshots.read(context,restoredDescriptor));
    else assertFalse(AttachmentSnapshots.has(restoredDescriptor));
    scenario=ActivityScenario.launch(MainActivity.class);
@@ -79,6 +88,11 @@ public class PdfServiceAttachmentRegressionTest {
     assertTrue(request[0].error);assertTrue(request[0].partial.toString(),request[0].partial.toString().contains("附件"));
     assertTrue(request[0].partial.toString(),request[0].partial.toString().contains("未发送"));
     assertTrue(request[0].partial.toString(),request[0].partial.toString().contains("图片扫描.pdf"));
+   }else if(mode>=PDF_REJECTED){
+    assertEquals(mode==PDF_REJECTED||mode==IMAGES_REJECTED?2:1,transport.requests);
+    if(mode==PDF_REJECTED){assertFalse(request[0].partial.toString(),request[0].error);assertEquals(1,transport.images);for(File page:transport.pageFiles)assertFalse("temporary pages must be removed",page.exists());}
+    else if(mode==PARTIAL){assertFalse(request[0].error);assertTrue(request[0].stopped);assertEquals("partial",request[0].partial.toString());}
+    else {assertTrue(request[0].error);assertTrue(request[0].partial.toString().contains("Unsupported Document"));if(mode==IMAGES_REJECTED)assertTrue(request[0].partial.toString().contains("images unsupported"));}
    }else{
     assertFalse(request[0].partial.toString(),request[0].error);assertEquals(1,transport.requests);assertNotNull(transport.sent);
     assertPdfBytes(transport.sent,pdf);
@@ -102,7 +116,8 @@ public class PdfServiceAttachmentRegressionTest {
   assertEquals(1,history.length());JSONArray content=history.getJSONObject(0).getJSONArray("content");
   assertEquals("the service must keep both the question and PDF block",2,content.length());
   JSONObject part=content.getJSONObject(1);assertEquals("file",part.getString("type"));
-  String data=part.getJSONObject("file").getString("file_data");assertTrue(data.startsWith("data:application/pdf;base64,"));
+  okio.Buffer wire=new okio.Buffer();JsonRequestBody.create(part,okhttp3.MediaType.get("application/json; charset=utf-8")).writeTo(wire);
+  String data=new JSONObject(wire.readUtf8()).getJSONObject("file").getString("file_data");assertTrue(data.startsWith("data:application/pdf;base64,"));
   assertArrayEquals("the service silently skipped or changed the image-bearing PDF",expected,Base64.decode(data.substring(data.indexOf(',')+1),Base64.DEFAULT));
  }
  private byte[] writeImagePdf(File target)throws Exception{

@@ -12,7 +12,7 @@ import java.util.*;
 
 /** URI-only persistence. Payloads exist only while preparing/sending a request. */
 final class AttachmentBatch {
- static final int MAX_COUNT=10, MAX_ITEM_CHARS=512*1024, MAX_TOTAL_CHARS=49_999_999, MAX_FILE_BYTES=49_999_999;
+ static final int MAX_COUNT=10;
  static List<Uri> collect(Intent data){
   LinkedHashSet<Uri> out=new LinkedHashSet<>();
   if(data!=null){if(data.getData()!=null)out.add(data.getData());ClipData clip=data.getClipData();if(clip!=null)for(int i=0;i<clip.getItemCount();i++){Uri u=clip.getItemAt(i).getUri();if(u!=null)out.add(u);}}
@@ -32,6 +32,11 @@ final class AttachmentBatch {
   o.inJustDecodeBounds=false;o.inSampleSize=sample;
   try(InputStream in=resolver.openInputStream(uri)){Bitmap b=BitmapFactory.decodeStream(in,null,o);if(b==null)throw new IOException("图片无法解码");return b;}
  }
+ static String payload(Context context,JSONObject d)throws Exception{
+  Uri uri=Uri.parse(d.optString("uri"));if(!"content".equals(uri.getScheme()))throw new IOException("附件地址无效");
+  if(isPdf(d.optString("mime"),d.optString("displayName"))){try(InputStream input=context.getContentResolver().openInputStream(uri)){return AttachmentSnapshots.capturePdf(context,d,input);}}
+  return payload(context.getContentResolver(),d);
+ }
  static String payload(ContentResolver resolver,JSONObject d)throws Exception{
   Uri u=Uri.parse(d.optString("uri"));if(!"content".equals(u.getScheme()))throw new IOException("附件地址无效");
   String mime=d.optString("mime"),name=d.optString("displayName");
@@ -42,9 +47,7 @@ final class AttachmentBatch {
    Bitmap bitmap=decode(resolver,u,1024);
    try{
     ByteArrayOutputStream out=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.JPEG,78,out);
-    String value="data:image/jpeg;base64,"+Base64.encodeToString(out.toByteArray(),Base64.NO_WRAP);
-    if(value.length()>MAX_ITEM_CHARS)throw new IOException("图片编码超过 512 KiB，请压缩图片后发送");
-    return value;
+    return "data:image/jpeg;base64,"+Base64.encodeToString(out.toByteArray(),Base64.NO_WRAP);
    }finally{bitmap.recycle();}
   }
   if(svg||isOfficeOrTextDocument(mime,name)||mime.contains("csv")){
@@ -63,9 +66,9 @@ final class AttachmentBatch {
   byte[] header=new byte[1024];int length=0,count;
   while(length<header.length&&(count=in.read(header,length,header.length-length))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("附件读取已取消");length+=count;}
   if(!new String(header,0,length,StandardCharsets.ISO_8859_1).contains("%PDF-"))throw new IOException("文件不是可识别的 PDF，请检查格式或重新导出");
-  in.reset();ByteArrayOutputStream bytes=new ByteArrayOutputStream();bytes.write("data:application/pdf;base64,".getBytes(StandardCharsets.US_ASCII));long total=0;
+  in.reset();ByteArrayOutputStream bytes=new ByteArrayOutputStream();bytes.write("data:application/pdf;base64,".getBytes(StandardCharsets.US_ASCII));
   try(android.util.Base64OutputStream encoded=new android.util.Base64OutputStream(bytes,Base64.NO_WRAP|Base64.NO_CLOSE)){
-   byte[] buffer=new byte[16384];while((count=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("附件读取已取消");total+=count;if(total>MAX_FILE_BYTES)throw new IOException("PDF 超过 50 MB 附件限制，请拆分文件后发送");encoded.write(buffer,0,count);}
+   byte[] buffer=new byte[16384];while((count=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("附件读取已取消");encoded.write(buffer,0,count);}
   }
   return bytes.toString(StandardCharsets.US_ASCII.name());
  }
@@ -103,12 +106,18 @@ final class AttachmentBatch {
  static JSONArray content(String text,List<JSONObject> descriptors,List<String> payloads,String protocol)throws JSONException{
   if(descriptors.size()>MAX_COUNT)throw new JSONException("最多添加 10 个附件");
   if(payloads.size()!=descriptors.size())throw new JSONException("附件准备未完成，请重新选择文件");
-  JSONArray content=new JSONArray().put(new JSONObject().put("type","text").put("text",text));long bytes=0;
-  for(int i=0;i<descriptors.size();i++){String payload=payloads.get(i);if(payload==null||isFailure(payload))throw new JSONException(payload==null?"附件准备未完成":failureMessage(payload));bytes+=estimatedBytes(descriptors.get(i),payload);if(bytes>MAX_TOTAL_CHARS)throw new JSONException("附件原始数据合计须小于 50 MB，请减少附件或拆分文件");content.put(part(descriptors.get(i),payload,protocol));}
+  JSONArray content=new JSONArray().put(new JSONObject().put("type","text").put("text",text));
+  for(int i=0;i<descriptors.size();i++){String payload=payloads.get(i);if(payload==null||isFailure(payload))throw new JSONException(payload==null?"附件准备未完成":failureMessage(payload));content.put(part(descriptors.get(i),payload,protocol));}
   return content;
  }
  static JSONArray contentForProtocol(String text,List<JSONObject> descriptors,List<String> payloads,String protocol)throws JSONException{return content(text,descriptors,payloads,protocol);}
  private static String normalizedMime(String mime,String name){String m=mime==null?"":mime.toLowerCase(Locale.ROOT);if(m.isEmpty()||"application/octet-stream".equals(m)){String n=name==null?"":name.toLowerCase(Locale.ROOT);String ext=n.contains(".")?n.substring(n.lastIndexOf('.')+1):"";if(Arrays.asList("txt","log","md","kt","kts","java","py","js","ts","tsx","jsx","css","c","cpp","h","rs","go","sh","sql","yaml","yml","toml","ini").contains(ext))return "text/plain";String guessed=android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);if(guessed!=null)return guessed;if(n.endsWith(".pdf"))return "application/pdf";if(n.endsWith(".txt"))return "text/plain";if(n.endsWith(".md"))return "text/markdown";if(n.endsWith(".csv"))return "text/csv";if(n.endsWith(".json"))return "application/json";if(n.endsWith(".docx"))return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";}return m.isEmpty()?"application/octet-stream":m;}
+ static JSONObject part(Context context,JSONObject descriptor,String payload,String protocol)throws Exception{
+  if(!AttachmentSnapshots.isPdfPayload(payload))return part(descriptor,payload,protocol);
+  FileAttachmentData data=AttachmentSnapshots.pdfData(context,payload);String name=descriptor.optString("displayName","attachment.pdf");
+  if(ChatApiClient.RESPONSES.equals(protocol))return new JSONObject().put("type","input_file").put("filename",name).put("file_data",data);
+  return new JSONObject().put("type","file").put("file",new JSONObject().put("filename",name).put("file_data",data));
+ }
  static JSONObject part(JSONObject descriptor,String payload)throws JSONException{return part(descriptor,payload,"responses");}
  static JSONObject part(JSONObject descriptor,String payload,String protocol)throws JSONException{
   String mime=binaryMime(descriptor,payload);

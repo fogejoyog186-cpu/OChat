@@ -103,6 +103,22 @@ public class AttachmentPresentationRegressionTest {
    screen.run(a->{assertTrue(text(screen.decor(),"notes.txt"));assertNotNull(screen.panel.getButton(AlertDialog.BUTTON_NEUTRAL));});
   }
  }
+ @Test public void streamingProviderPdfCanPreviewAllPagesAndReleasesItsTemporaryCopy(){
+  android.content.Context context=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().getTargetContext();
+  java.util.Set<String> before=previewCopies(context);
+  try(Screen screen=new Screen()){
+   screen.run(a->screen.panel=screen.ui.preview(file("pdf-pipe-preview-v1","streamed.pdf","application/pdf")));
+   await(screen,()->text(screen.decor(),"1 / 2"));
+   screen.run(a->described(screen.decor(),"下一页").performClick());
+   await(screen,()->text(screen.decor(),"2 / 2"));
+  }
+  assertEquals(before,previewCopies(context));
+ }
+ private static java.util.Set<String> previewCopies(android.content.Context context){
+  java.util.Set<String> names=new java.util.HashSet<>();java.io.File[] files=context.getCacheDir().listFiles();
+  if(files!=null)for(java.io.File file:files)if(file.getName().startsWith("ochat-pdf-preview-"))names.add(file.getName());
+  return names;
+ }
  @Test public void pdfStaysInTheSharedPanelAndCanChangePages(){
   try(Screen screen=new Screen()){
    screen.run(a->screen.panel=screen.ui.preview(file("pdf-preview-v2","report.pdf","application/pdf")));

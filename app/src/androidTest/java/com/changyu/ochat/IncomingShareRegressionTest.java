@@ -75,10 +75,20 @@ public class IncomingShareRegressionTest {
  @Test public void coldShareIsRetainedWithoutAModelAndRecreationDoesNotRepeatIt()throws Exception{
   try(Preferences settings=new Preferences();ActivityScenario<MainActivity> scenario=ActivityScenario.launch(shared("share-cold"))){
    await(scenario,a->pending(a).size()==1&&!(Boolean)value(a,"attachmentLoading")&&value(a,"activeAttachmentImport")==null);
-   scenario.onActivity(a->{assertEquals(context().getPackageName()+".attachments",Uri.parse(pending(a).get(0).optString("uri")).getAuthority());assertEquals(Intent.ACTION_SEND,a.getIntent().getAction());assertFalse(a.getIntent().hasExtra(Intent.EXTRA_STREAM));assertNull(a.getIntent().getClipData());assertTrue(composer(a).getText().toString().contains("分享文件"));});
+   scenario.onActivity(a->{assertEquals(context().getPackageName()+".attachments",Uri.parse(pending(a).get(0).optString("uri")).getAuthority());assertEquals(Intent.ACTION_SEND,a.getIntent().getAction());assertFalse(a.getIntent().hasExtra(Intent.EXTRA_STREAM));assertNull(a.getIntent().getClipData());assertEquals("",composer(a).getText().toString());});
    scenario.recreate();
    await(scenario,a->pending(a).size()==1&&!(Boolean)value(a,"attachmentLoading"));
    JSONArray sessions=new JSONArray(settings.prefs.getString("sessions","[]"));for(int i=0;i<sessions.length();i++)assertEquals(0,sessions.getJSONObject(i).getJSONArray("messages").length());
+  }
+ }
+ @Test public void configuredColdShareWaitsForManualSendAfterRotation()throws Exception{
+  try(Preferences settings=new Preferences()){
+   settings.model();try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(shared("share-manual").putExtra(Intent.EXTRA_TEXT,"Read this file"))){
+    await(scenario,a->pending(a).size()==1&&!(Boolean)value(a,"attachmentLoading")&&value(a,"activeAttachmentImport")==null);
+    scenario.recreate();await(scenario,a->pending(a).size()==1&&!(Boolean)value(a,"attachmentLoading"));
+    scenario.onActivity(a->assertEquals("Read this file",composer(a).getText().toString()));
+    JSONArray sessions=SessionRepository.get(settings.prefs).read();for(int i=0;i<sessions.length();i++){JSONObject session=sessions.getJSONObject(i);assertEquals(0,session.getJSONArray("messages").length());JSONArray queue=session.optJSONArray("outbox");assertTrue(queue==null||queue.length()==0);}
+   }
   }
  }
  @Test public void warmSharePreservesExistingDraftAndDoesNotSendIt()throws Exception{
@@ -143,17 +153,18 @@ public class IncomingShareRegressionTest {
    }
   }finally{entered.setBoolean(null,wasEntered);}
  }
- @Test public void preparedShareAutomaticallyQueuesOnceWhileModelIsBusy()throws Exception{
+ @Test public void preparedShareWaitsForManualSendEvenWhenModelIsBusy()throws Exception{
   try(Preferences settings=new Preferences()){
    settings.model();Transport transport=new Transport();
    try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
     scenario.onActivity(a->{String id=settings.prefs.getString("currentSessionId","");JSONObject session=MessageEdits.findSession(SessionRepository.get(settings.prefs).read(),id);ChatGenerationService.Run run=new ChatGenerationService.Run(id,"share-fixture","default",System.currentTimeMillis());run.client=transport;run.base="https://unused.invalid/v1";run.key="local-test-only";run.protocol=ChatApiClient.CHAT_COMPLETIONS;run.history=new JSONArray();run.session=session;run.outputTokens="512";ChatGenerationService.launch(a,run);});
     assertTrue(transport.started.await(5,TimeUnit.SECONDS));
     scenario.onActivity(a->a.onNewIntent(shared("share-queued")));
-    await(scenario,a->{JSONObject session=MessageEdits.findSession(SessionRepository.get(settings.prefs).read(),settings.prefs.getString("currentSessionId",""));JSONArray queue=session==null?null:session.optJSONArray("outbox");return queue!=null&&queue.length()==1&&pending(a).isEmpty();});
+    await(scenario,a->pending(a).size()==1&&!(Boolean)value(a,"attachmentLoading")&&value(a,"activeAttachmentImport")==null);
+    scenario.onActivity(a->assertEquals("",composer(a).getText().toString()));
     scenario.recreate();InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-    JSONObject session=MessageEdits.findSession(SessionRepository.get(settings.prefs).read(),settings.prefs.getString("currentSessionId",""));JSONArray queue=session.getJSONArray("outbox");assertEquals(1,queue.length());assertEquals(1,transport.calls);
-    JSONObject message=queue.getJSONObject(0).getJSONObject("message");assertTrue(message.getString("text").contains("分享文件"));assertEquals(1,message.getJSONArray("attachments").length());assertTrue(AttachmentSnapshots.has(message.getJSONArray("attachments").getJSONObject(0)));
+    JSONObject session=MessageEdits.findSession(SessionRepository.get(settings.prefs).read(),settings.prefs.getString("currentSessionId",""));JSONArray queue=session.optJSONArray("outbox");assertTrue(queue==null||queue.length()==0);assertEquals(1,transport.calls);
+    scenario.onActivity(a->{assertEquals(1,pending(a).size());assertTrue(AttachmentSnapshots.has(pending(a).get(0)));});
    }
   }
  }
