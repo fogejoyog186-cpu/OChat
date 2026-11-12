@@ -12,29 +12,37 @@ import java.util.zip.*;
 
 /** Portable user-selected backup; file entries are spooled to disk, never held as one huge byte array. */
 final class ConversationBackup {
- static final int MAX_JSON=32*1024*1024,MAX_FILE=AttachmentBatch.MAX_FILE_BYTES,MAX_TOTAL=150*1024*1024;
+ static final int MAX_JSON=32*1024*1024,MAX_TOTAL=150*1024*1024,MAX_FILE=MAX_TOTAL;
  static int exportTo(Context context,Uri uri,String snapshot)throws Exception{
   JSONArray sessions=new JSONArray(snapshot);Map<String,File> files=new LinkedHashMap<>();Map<String,String> uris=new HashMap<>();int[] total={0},missing={0};
   try{
    walk(sessions,d->{
     String original=d.optString("uri");if(original.isEmpty())return;String name=uris.get(original);
-    if(name==null){byte[] bytes=null;
-     try(InputStream in=context.getContentResolver().openInputStream(Uri.parse(original))){bytes=read(in,MAX_FILE);}catch(Exception unavailable){
-      String payload=null;try{payload=AttachmentSnapshots.read(context,d);}catch(InterruptedIOException cancelled){throw cancelled;}catch(IOException missingSnapshot){/* Mark unavailable below and preserve the rest of the backup. */}
-      if(payload!=null){String type=AttachmentBatch.part(d,payload,ChatApiClient.RESPONSES).optString("type");if("input_file".equals(type)||"image_url".equals(type))bytes=Base64.decode(payload.substring(payload.indexOf(',')+1),Base64.DEFAULT);else if(!payload.isEmpty())bytes=payload.getBytes(StandardCharsets.UTF_8);}
+    if(name==null){
+     InputStream input=null;
+     try{input=context.getContentResolver().openInputStream(Uri.parse(original));}catch(IOException|SecurityException unavailable){}
+     if(input==null){
+      String payload=null;try{payload=AttachmentSnapshots.read(context,d);}catch(InterruptedIOException cancelled){throw cancelled;}catch(IOException missingSnapshot){}
+      if(AttachmentSnapshots.isPdfPayload(payload))input=new FileInputStream(AttachmentSnapshots.pdfData(context,payload).file);
+      else if(payload!=null){String type=AttachmentBatch.part(d,payload,ChatApiClient.RESPONSES).optString("type");
+       if("input_file".equals(type)||"image_url".equals(type))input=new android.util.Base64InputStream(new ByteArrayInputStream(payload.substring(payload.indexOf(',')+1).getBytes(StandardCharsets.US_ASCII)),Base64.DEFAULT);
+       else input=new ByteArrayInputStream(payload.getBytes(StandardCharsets.UTF_8));}
      }
-     if(bytes!=null&&bytes.length<=MAX_FILE){total[0]+=bytes.length;if(total[0]>MAX_TOTAL)throw new IOException("附件总大小超过 150 MiB，请分批备份");name="attachments/"+UUID.randomUUID();File spool=File.createTempFile("backup-",".part",context.getCacheDir());files.put(name,spool);try(OutputStream out=new FileOutputStream(spool)){out.write(bytes);}uris.put(original,name);}
+     if(input!=null){
+      name="attachments/"+UUID.randomUUID();File spool=File.createTempFile("backup-",".part",context.getCacheDir());files.put(name,spool);
+      try(InputStream in=input;OutputStream out=new FileOutputStream(spool)){total[0]+=copy(in,out,MAX_TOTAL-total[0]);}
+      uris.put(original,name);
+     }
     }
     d.remove("payloadSnapshotFile");d.remove("payloadSnapshotChars");d.remove("restoredCopy");
-    if(name!=null)d.put("backupFile",name);else {d.put("backupUnavailable",true);missing[0]++;}
+    if(name!=null){d.put("backupFile",name);d.remove("payloadSnapshot");}else {d.put("backupUnavailable",true);missing[0]++;}
    });
    JSONObject root=new JSONObject().put("format","ochat-backup").put("version",1).put("createdAt",System.currentTimeMillis()).put("sessions",sessions);
    byte[] json=root.toString().getBytes(StandardCharsets.UTF_8);if(json.length>MAX_JSON)throw new IOException("对话数据超过 32 MiB，请分批导出");
    try(OutputStream stream=context.getContentResolver().openOutputStream(uri,"wt");ZipOutputStream zip=new ZipOutputStream(Objects.requireNonNull(stream))){
     zip.putNextEntry(new ZipEntry("conversations.json"));zip.write(json);zip.closeEntry();
     for(Map.Entry<String,File> file:files.entrySet()){zip.putNextEntry(new ZipEntry(file.getKey()));try(InputStream in=new FileInputStream(file.getValue())){copy(in,zip,MAX_FILE);}zip.closeEntry();}
-   }
-   return missing[0];
+   }return missing[0];
   }finally{for(File file:files.values())file.delete();}
  }
  static JSONArray importFrom(Context context,Uri uri)throws Exception{
@@ -54,6 +62,7 @@ final class ConversationBackup {
    File folder=new File(context.getFilesDir(),"imported_attachments");if(!folder.exists()&&!folder.mkdirs())throw new IOException("无法创建附件目录");
    walk(sessions,d->{
     d.remove("payloadSnapshotFile");d.remove("payloadSnapshotChars");d.remove("restoredCopy");d.remove("importedCopy");
+    if(AttachmentSnapshots.isPdfPayload(d.optString("payloadSnapshot")))d.remove("payloadSnapshot");
     String path=d.optString("backupFile");if(path.isEmpty())return;File spool=files.get(path);if(spool==null){d.put("backupUnavailable",true);return;}String content=restored.get(path);
     if(content==null){String original=d.optString("displayName","attachment"),ext=original.contains(".")?original.substring(original.lastIndexOf('.')):"";if(!ext.matches("\\.[a-zA-Z0-9]{1,10}"))ext="";
      File file=new File(folder,UUID.randomUUID()+ext);created.add(file);try(InputStream in=new FileInputStream(spool);OutputStream out=new FileOutputStream(file)){copy(in,out,MAX_FILE);}content=FileProvider.getUriForFile(context,context.getPackageName()+".attachments",file).toString();restored.put(path,content);}

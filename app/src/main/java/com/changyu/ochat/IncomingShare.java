@@ -36,7 +36,7 @@ final class IncomingShare {
    ArrayList<Uri> uris=new ArrayList<>();for(int i=0;i<sources.length();i++){String value=sources.getString(i);if(value.length()>MAX_URI_CHARS)throw new JSONException("Shared URI too long");Uri uri=Uri.parse(value);if(!"content".equals(uri.getScheme()))throw new JSONException("Invalid shared URI");uris.add(uri);}
    String text=json.optString("text");if(text.length()>MAX_TEXT_CHARS)throw new JSONException("Shared text too long");
    Request request=new Request(json.getString("id"),uris,json.optInt("flags")&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),text,json.optBoolean("shared"));
-   request.started=json.optBoolean("started");request.autoSend=json.optBoolean("autoSend");request.expectedDraft=json.optString("expectedDraft");request.sessionId=json.optString("sessionId");request.modelId=json.optString("modelId");request.providerId=json.optString("providerId");return request;
+   request.started=json.optBoolean("started");request.autoSend=false;request.expectedDraft=json.optString("expectedDraft");request.sessionId=json.optString("sessionId");request.modelId=json.optString("modelId");request.providerId=json.optString("providerId");return request;
   }
  }
  static Request read(Context context,Intent intent)throws IOException{

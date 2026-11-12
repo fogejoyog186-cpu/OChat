@@ -28,6 +28,13 @@ public class AttachmentFixtureProvider extends ContentProvider {
     try{for(int i=0;i<2;i++){PdfDocument.Page page=document.startPage(new PdfDocument.PageInfo.Builder(600,800,i+1).create());Paint paint=new Paint();paint.setTextSize(24);page.getCanvas().drawText("Fixture PDF page "+(i+1),40,60,paint);document.finishPage(page);}document.writeTo(output);}finally{document.close();}
    }else output.write(("Fixture contents "+uri.getLastPathSegment()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }catch(IOException error){throw new FileNotFoundException(error.getMessage());}
+  if(uri.getLastPathSegment().startsWith("pdf-pipe"))try{
+   ParcelFileDescriptor[] pipe=ParcelFileDescriptor.createPipe();
+   new Thread(()->{try(InputStream input=new FileInputStream(file);OutputStream output=new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])){
+    byte[] buffer=new byte[8192];int count;while((count=input.read(buffer))!=-1)output.write(buffer,0,count);
+   }catch(IOException ignored){}},"fixture-pdf-pipe").start();
+   return pipe[0];
+  }catch(IOException error){throw new FileNotFoundException(error.getMessage());}
   return ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY);
  }
  public Uri insert(Uri uri,ContentValues values){throw new UnsupportedOperationException();}

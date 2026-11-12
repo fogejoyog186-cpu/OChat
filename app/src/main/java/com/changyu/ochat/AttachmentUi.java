@@ -142,13 +142,14 @@ final class AttachmentUi implements AutoCloseable {
   Button previous=pageButton("‹","上一页"),next=pageButton("›","下一页");TextView count=UiStyle.text(owner,"",13,palette.muted,false);count.setGravity(Gravity.CENTER);count.setTag("pdf-page-count");
   controls.addView(previous,new LinearLayout.LayoutParams(dp(48),dp(48)));controls.addView(count,new LinearLayout.LayoutParams(0,-2,1));controls.addView(next,new LinearLayout.LayoutParams(dp(48),dp(48)));body.addView(controls);
   PanelDialog dialog=new PanelDialog(owner,file.optString("displayName","文件"),"PDF",body);dialog.action(AlertDialog.BUTTON_NEUTRAL,"其他应用打开",()->openExternal(file,uri));
+  PdfPreviewSource source=new PdfPreviewSource(owner,file,uri);
   Future<?>[] work={null};int[] page={0},pages={0},generation={0};
   java.util.function.IntConsumer render=index->{
    if(index<0||(pages[0]>0&&index>=pages[0]))return;int token=++generation[0];if(work[0]!=null)work[0].cancel(true);
    previous.setEnabled(false);next.setEnabled(false);busy.setVisibility(View.VISIBLE);
    work[0]=previews.submit(()->{
-    try(ParcelFileDescriptor descriptor=owner.getContentResolver().openFileDescriptor(uri,"r")){
-     if(descriptor==null)throw new IOException();try(PdfRenderer renderer=new PdfRenderer(descriptor);PdfRenderer.Page pdf=renderer.openPage(index)){
+    try(ParcelFileDescriptor descriptor=ParcelFileDescriptor.open(source.file(),ParcelFileDescriptor.MODE_READ_ONLY)){
+     try(PdfRenderer renderer=new PdfRenderer(descriptor);PdfRenderer.Page pdf=renderer.openPage(index)){
       int total=renderer.getPageCount();float scale=Math.min(1400f/pdf.getWidth(),1800f/pdf.getHeight());
       Bitmap bitmap=Bitmap.createBitmap(Math.max(1,Math.round(pdf.getWidth()*scale)),Math.max(1,Math.round(pdf.getHeight()*scale)),Bitmap.Config.ARGB_8888);
       bitmap.eraseColor(Color.WHITE);pdf.render(bitmap,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
@@ -158,7 +159,7 @@ final class AttachmentUi implements AutoCloseable {
    });
   };
   previous.setOnClickListener(v->render.accept(page[0]-1));next.setOnClickListener(v->render.accept(page[0]+1));
-  show(dialog,()->{generation[0]++;if(work[0]!=null)work[0].cancel(true);picture.setImageDrawable(null);});render.accept(0);return dialog;
+  show(dialog,()->{generation[0]++;if(work[0]!=null)work[0].cancel(true);source.close();picture.setImageDrawable(null);});render.accept(0);return dialog;
  }
  private Button pageButton(String label,String description){
   Button button=new Button(owner);button.setText(label);button.setTextSize(24);button.setTextColor(palette.primary);button.setContentDescription(description);button.setPadding(0,0,0,0);button.setMinWidth(0);button.setMinimumWidth(0);button.setBackgroundTintList(null);UiStyle.clickable(button,palette.surface,16,false);return button;

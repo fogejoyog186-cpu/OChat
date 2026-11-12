@@ -29,7 +29,7 @@ public class SettingsActivity extends AppCompatActivity {
   LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(palette.page);
   TextView back=text("‹  "+(isNew?"新建供应商":"编辑供应商"),21);back.setPadding(dp(18),dp(16),dp(18),dp(16));back.setOnClickListener(v->finish());root.addView(back,new LinearLayout.LayoutParams(-1,dp(ScreenInsets.TOP_BAR_DP)));
   ScrollView scroll=new ScrollView(this);LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(18),0,dp(18),dp(28));
-  provider=field(item.optString("name",""));api=field(item.optString("api","https://api.openai.com/v1"));key=field(item.optString("apiKey",""));key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+  provider=field(item.optString("name",""));api=field(item.optString("api",ProtocolAddress.example(item.optString("protocol",ChatApiClient.CHAT_COMPLETIONS))));key=field(item.optString("apiKey",""));key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
   labelled(body,"供应商名称",provider);labelled(body,"API 地址",api);labelled(body,"API Key",key);protocolControls(body);
   TextView heading=text("已配置模型",18);heading.setPadding(dp(4),dp(24),0,dp(4));body.addView(heading);
   TextView hint=text("点击模型查看详情或重命名",12);hint.setTextColor(palette.muted);body.addView(hint);
@@ -53,10 +53,17 @@ public class SettingsActivity extends AppCompatActivity {
   ChoiceSpinner protocol=new ChoiceSpinner(this,"接口协议");
   protocol.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"OpenAI · Chat Completions","OpenAI · Responses","Anthropic · Messages","Google · Gemini"}));
   String[] protocols={ChatApiClient.CHAT_COMPLETIONS,ChatApiClient.RESPONSES,ChatApiClient.ANTHROPIC,ChatApiClient.GEMINI};int selected=java.util.Arrays.asList(protocols).indexOf(item.optString("protocol"));protocol.setSelection(Math.max(0,selected));
+  TextView addressHint=text(ProtocolAddress.hint(protocols[Math.max(0,selected)]),12);addressHint.setTextColor(palette.muted);addressHint.setTag("protocol-address-hint");addressHint.setPadding(dp(4),dp(10),dp(4),dp(4));
+  api.setHint(ProtocolAddress.example(protocols[Math.max(0,selected)]));
   protocol.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
-   public void onNothingSelected(AdapterView<?> parent){}public void onItemSelected(AdapterView<?> parent,View view,int index,long id){try{String previous=item.optString("protocol",ChatApiClient.CHAT_COMPLETIONS);item.put("protocol",protocols[index]);if(!previous.equals(protocols[index])){String current=api.getText().toString().trim();if(current.equals("https://api.openai.com/v1")||current.equals("https://api.anthropic.com/v1")||current.equals("https://generativelanguage.googleapis.com/v1beta"))api.setText(index==2?"https://api.anthropic.com/v1":index==3?"https://generativelanguage.googleapis.com/v1beta":"https://api.openai.com/v1");}}catch(JSONException ignored){}}
+   public void onNothingSelected(AdapterView<?> parent){}public void onItemSelected(AdapterView<?> parent,View view,int index,long id){
+    try{String previous=item.optString("protocol",ChatApiClient.CHAT_COMPLETIONS);item.put("protocol",protocols[index]);
+     if(!previous.equals(protocols[index])&&ProtocolAddress.isDefault(api.getText().toString()))api.setText(ProtocolAddress.example(protocols[index]));
+     api.setHint(ProtocolAddress.example(protocols[index]));addressHint.setText(ProtocolAddress.hint(protocols[index]));
+    }catch(JSONException ignored){}
+   }
   });
-  body.addView(protocol,new LinearLayout.LayoutParams(-1,dp(56)));
+  body.addView(protocol,new LinearLayout.LayoutParams(-1,dp(56)));body.addView(addressHint);
  }
  private void renderModels(){
   models.removeAllViews();JSONArray all=item.optJSONArray("models");
@@ -82,6 +89,7 @@ public class SettingsActivity extends AppCompatActivity {
   EditText levels=field(String.join(",",java.util.Arrays.copyOfRange(caps.efforts,1,caps.efforts.length)));labelled(body,"支持的思考档位（英文逗号分隔，留空仅自动）",levels);
   Runnable updateCapabilities=()->{sampling.setEnabled(!automatic.isChecked());levels.setEnabled(!automatic.isChecked());if(automatic.isChecked()){ModelCapabilities detected=new ModelCapabilities(id.getText().toString(),item.optString("protocol",ChatApiClient.CHAT_COMPLETIONS),new JSONObject());sampling.setChecked(detected.sampling);levels.setText(String.join(",",java.util.Arrays.copyOfRange(detected.efforts,1,detected.efforts.length)));}};automatic.setOnCheckedChangeListener((button,checked)->updateCapabilities.run());id.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int d){}public void onTextChanged(CharSequence s,int a,int b,int c){updateCapabilities.run();}public void afterTextChanged(android.text.Editable e){}});updateCapabilities.run();
   TextView capabilityHint=text("自动根据模型 ID 识别档位。兼容网关需要自定义时关闭自动识别，可填写 none、enabled、minimal、low、medium、high、xhigh、max、ultra；enabled 仅用于思考开关。",12);capabilityHint.setTextColor(palette.muted);body.addView(capabilityHint);
+  DocumentOcrSettings documentOcr=new DocumentOcrSettings(this,prefs,item,model,body);
   EditText inputPrice=field(model.optString("inputPrice","")),outputPrice=field(model.optString("outputPrice","")),currency=field(model.optString("currency","USD"));
   inputPrice.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);outputPrice.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);
   labelled(body,"每百万输入 token 单价（选填）",inputPrice);labelled(body,"每百万输出 token 单价（选填）",outputPrice);labelled(body,"币种",currency);scroll.addView(body);
@@ -96,6 +104,7 @@ public class SettingsActivity extends AppCompatActivity {
    String requested=levels.getText().toString().trim();for(String level:requested.split(","))if(!level.trim().isEmpty()&&!java.util.Arrays.asList("none","enabled","minimal","low","medium","high","xhigh","max","ultra").contains(level.trim())){levels.setError("包含未知档位，请使用说明中的英文名称");return;}
    try{
     JSONArray all=item.getJSONArray("models");for(int i=0;i<all.length();i++){JSONObject other=all.optJSONObject(i);if(other!=null&&other!=existing&&value.equals(other.optString("id"))){id.setError("ID 已存在");return;}}
+    if(!documentOcr.save(model,item.optString("id"),value))return;
     String old=model.optString("id");model.put("id",value).put("displayName",name.getText().toString().trim().isEmpty()?value:name.getText().toString().trim()).put("outputTokens",tokens.getText().toString().trim()).put("contextLength",context.getText().toString().trim()).put("capabilityMode",automatic.isChecked()?"auto":"custom").put("supportsSampling",sampling.isChecked()).put("reasoningLevels",requested).put("inputPrice",inputPrice.getText().toString().trim()).put("outputPrice",outputPrice.getText().toString().trim()).put("currency",currency.getText().toString().trim());
     if(existing==null)all.put(model);if(old.equals(item.optString("selectedModelId")))item.put("selectedModelId",value);
     ModelStore.fallback(item);renderModels();dialog.dismiss();

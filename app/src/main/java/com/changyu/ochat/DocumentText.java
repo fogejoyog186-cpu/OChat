@@ -127,9 +127,8 @@ final class DocumentText {
   String result(){return value.toString()+(truncated?TRUNCATED:"");}
  }
  private static final class BoundedSource extends FilterInputStream{
-  long read;
   BoundedSource(InputStream input){super(input);}
-  private void counted(int n)throws IOException{interrupted();if(n>0){read+=n;if(read>AttachmentBatch.MAX_FILE_BYTES)throw new IOException("文件超过 50 MB 附件限制，请拆分文件后发送");}}
+  private void counted(int n)throws IOException{interrupted();}
   @Override public int read()throws IOException{interrupted();int n=in.read();counted(n<0?0:1);return n;}
   @Override public int read(byte[] b,int off,int len)throws IOException{interrupted();int n=in.read(b,off,len);counted(n);return n;}
   @Override public long skip(long count)throws IOException{long done=0;byte[] bytes=new byte[8192];while(done<count){int n=read(bytes,0,(int)Math.min(bytes.length,count-done));if(n<=0)break;done+=n;}return done;}
